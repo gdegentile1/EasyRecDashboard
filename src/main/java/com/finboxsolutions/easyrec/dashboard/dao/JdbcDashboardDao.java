@@ -50,9 +50,9 @@ public class JdbcDashboardDao implements DashboardDao {
             + "DURATION_MILLISEC, DESCRIPTION, PURGE_STATUS";
 
     private static final String RUN_COLUMNS =
-            "RUN_ID, BATCH_ID, REC_TYPE, TEMPLATE_ID, SOURCE_ALIAS, TARGET_ALIAS, "
-            + "SOURCE_LABEL, TARGET_LABEL, STATUS, SYS_DATE, SYS_TIME, DURATION_MILLISEC, "
-            + "DESCRIPTION, PURGE_STATUS";
+            "RUN_ID, BATCH_ID, REC_TYPE, TEMPLATE_ID, PROJECT_PATH, SOURCE_ALIAS, "
+            + "TARGET_ALIAS, SOURCE_LABEL, TARGET_LABEL, STATUS, SYS_DATE, SYS_TIME, "
+            + "DURATION_MILLISEC, DESCRIPTION, PURGE_STATUS";
 
     private static final String CONTEXT_COLUMNS =
             "RUN_ID, POSITION, TEMPLATE_ID, SOURCE_ALIAS, TARGET_ALIAS, SOURCE_LABEL, "
@@ -306,6 +306,22 @@ public class JdbcDashboardDao implements DashboardDao {
     }
 
     @Override
+    public int updateRunProjectPath(Collection<Integer> runIds, String projectPath) {
+        int total = 0;
+        for (List<Integer> chunk : Sql.chunks(runIds)) {
+            String sql = "UPDATE ER_DASHBOARD_RUN SET PROJECT_PATH = ? WHERE RUN_ID IN "
+                    + Sql.placeholders(chunk.size());
+            total += update(sql, statement -> {
+                statement.setString(1, projectPath);
+                for (int index = 0; index < chunk.size(); index++) {
+                    statement.setInt(index + 2, chunk.get(index));
+                }
+            });
+        }
+        return total;
+    }
+
+    @Override
     public int updateRunContext(int runId, int templateId, Map<String, Object> values) {
         List<String> assignments = new ArrayList<>();
         List<Object> bound = new ArrayList<>();
@@ -464,7 +480,7 @@ public class JdbcDashboardDao implements DashboardDao {
                 rows.getString("RUN_MODE"),
                 rows.getString("USER_NAME"),
                 Sql.status(rows, "STATUS"),
-                Sql.epochMillis(rows, "SYS_DATE", "SYS_TIME"),
+                Sql.epochMillis(rows, "SYS_TIME", "SYS_DATE"),
                 Sql.bigint(rows, "DURATION_MILLISEC"),
                 rows.getString("DESCRIPTION"),
                 rows.getInt("PURGE_STATUS"));
@@ -476,12 +492,13 @@ public class JdbcDashboardDao implements DashboardDao {
                 rows.getInt("BATCH_ID"),
                 rows.getString("REC_TYPE"),
                 Sql.integer(rows, "TEMPLATE_ID"),
+                rows.getString("PROJECT_PATH"),
                 rows.getString("SOURCE_ALIAS"),
                 rows.getString("TARGET_ALIAS"),
                 rows.getString("SOURCE_LABEL"),
                 rows.getString("TARGET_LABEL"),
                 Sql.status(rows, "STATUS"),
-                Sql.epochMillis(rows, "SYS_DATE", "SYS_TIME"),
+                Sql.epochMillis(rows, "SYS_TIME", "SYS_DATE"),
                 Sql.bigint(rows, "DURATION_MILLISEC"),
                 rows.getString("DESCRIPTION"),
                 rows.getInt("PURGE_STATUS"));

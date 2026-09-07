@@ -63,27 +63,25 @@ public class DashboardService {
         }
 
         /**
-         * The reconciliation's outcome.
+         * The reconciliation's outcome, from ER_DASHBOARD_STAT_ROWS and nowhere else.
          *
-         * <p>Two tables record it, and only together do they cover the three outcomes.
-         * ER_DASHBOARD_STAT_ROWS says whether a reconciliation that ran found breaks - but a
-         * reconciliation whose execution did not complete never got as far as writing a
-         * statistics row at all, and the -1 that says so is on the context row. Reading the
-         * statistics alone therefore reports an execution error as "no status recorded",
-         * which is the one outcome an operator most needs to see.
+         * <p>That column is written from {@code TemplateUtils.getStatus}: 0 the template
+         * matched, 1 it had mismatches, -1 it produced no statistics. It is the only record
+         * of how a reconciliation actually turned out.
          *
-         * <p>So an error on either side wins, statistics answer for anything that ran, and
-         * the context row is the fallback when there are none.
+         * <p>ER_DASHBOARD_RUN_CONTEXT has a STATUS too and it is not an outcome.
+         * {@code ExecutionContextDaoImpl} inserts a hard-coded 0 into it and nothing in
+         * EasyRec ever updates it - the schema has a select and an insert for that table and
+         * no update at all. Under the reconciliation mapping a permanent 0 reads as PASSED,
+         * so consulting it made every reconciliation claim to have passed however many breaks
+         * it found. It is an operator-maintained field with no operator writing to it yet.
+         *
+         * <p>Absent statistics are therefore UNKNOWN rather than anything else: a
+         * reconciliation that recorded nothing has no outcome to report, and saying PASSED
+         * for it was the same mistake in a quieter form.
          */
         public StatusLabel status() {
-            StatusLabel contextStatus = context == null ? StatusLabel.UNKNOWN : context.status();
-            if (contextStatus == StatusLabel.ERROR) {
-                return StatusLabel.ERROR;
-            }
-            if (stats != null) {
-                return stats.status();
-            }
-            return contextStatus;
+            return stats == null ? StatusLabel.UNKNOWN : stats.status();
         }
     }
 
@@ -115,8 +113,8 @@ public class DashboardService {
     public static final int HOME_RECENT_LIMIT = 25;
 
     /** The run columns the batch list shows, in display order. */
-    public static final List<String> RUN_COLUMNS =
-            List.of("Template Path", "Source Alias", "Source Label", "Target Alias", "Target Label");
+    public static final List<String> RUN_COLUMNS = List.of("Project", "Template Path",
+            "Source Alias", "Source Label", "Target Alias", "Target Label");
 
     /** The context columns a reconciliation row shows, in display order. */
     public static final List<String> PROJECT_COLUMNS =
@@ -300,6 +298,7 @@ public class DashboardService {
         }
         for (RunRow run : runs) {
             TemplateRow template = run.templateId() == null ? null : templates.get(run.templateId());
+            add(values, "Project", run.projectPath());
             add(values, "Template Path", template == null ? null : template.fullPath());
             add(values, "Source Alias", run.sourceAlias());
             add(values, "Source Label", run.sourceLabel());

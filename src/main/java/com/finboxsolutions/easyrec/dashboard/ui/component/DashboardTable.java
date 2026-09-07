@@ -18,6 +18,7 @@ import com.finboxsolutions.swing.jtable.excel.ExcelTableModel;
 import com.finboxsolutions.swing.jtable.renderers.zoom.ZoomRenderer;
 import com.finboxsolutions.swing.jtable.renderers.zoom.ZoomWheelListener;
 import com.finboxsolutions.viewer.JViewer;
+import com.finboxsolutions.viewer.utils.TableViewUtils;
 
 /**
  * The dashboard's table: EasyRec's own {@code ExcelTable}, set up the way
@@ -49,6 +50,9 @@ public class DashboardTable extends ExcelTable {
 
     private static final long serialVersionUID = 1L;
 
+    private static final org.apache.logging.log4j.Logger LOG =
+            org.apache.logging.log4j.LogManager.getLogger(DashboardTable.class);
+
     /** No single column may dominate the width, however long one template path is. */
     private static final int MAX_PACKED_WIDTH = 320;
 
@@ -68,6 +72,7 @@ public class DashboardTable extends ExcelTable {
     private static final int CELL_PADDING = 12;
 
     private transient JViewer viewer;
+    private transient String viewPath;
 
     public DashboardTable(ExcelTableModel model) {
         super(model);
@@ -222,6 +227,35 @@ public class DashboardTable extends ExcelTable {
                 defaultSorter.setSortable(index, sortable);
             }
         }
+    }
+
+    /**
+     * Loads this table's view, if it has one and one can be found.
+     *
+     * <p>{@code TableViewUtils} looks on the filesystem first and then on the classpath under
+     * {@code resources/}, which is how a deployment overrides a shipped view by dropping a
+     * file beside the application. A view that is not there is not an error - the table keeps
+     * the columns the model gave it - so a miss is logged and nothing else happens.
+     *
+     * <p>Applied once, as the table is built rather than on every load: a view is the default
+     * layout, and re-applying it would undo a column the reader had widened or hidden.
+     */
+    void applyView() {
+        if (viewPath == null || viewer == null) {
+            return;
+        }
+        try {
+            // Already on the EDT, so the renderers are set without another invokeLater.
+            TableViewUtils.loadView(viewer, viewPath, false);
+        } catch (Exception failure) {
+            // A stale view names columns this table does not have. That costs the layout,
+            // not the data, so the table is left as the model built it.
+            LOG.warn("Could not apply the view [{}]", viewPath, failure);
+        }
+    }
+
+    void setViewPath(String path) {
+        this.viewPath = path;
     }
 
     /** The viewer this table was installed in, so a load can refresh its status bar. */

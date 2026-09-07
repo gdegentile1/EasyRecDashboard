@@ -71,6 +71,15 @@ public interface DashboardDao {
     int updateBatchDescription(int batchId, String description);
 
     /**
+     * Updates PROJECT_PATH on the given runs. Returns the number of rows changed.
+     *
+     * <p>Takes runs rather than a batch because that is where the column lives. The batch
+     * screen shows one project for the batch and passes every run it holds - normally one -
+     * so what is shown and what is written stay the same thing.
+     */
+    int updateRunProjectPath(Collection<Integer> runIds, String projectPath);
+
+    /**
      * Updates the operator-maintained columns of one context row.
      *
      * <p>Constrained on BOTH RUN_ID and TEMPLATE_ID: ER_DASHBOARD_RUN_CONTEXT has no

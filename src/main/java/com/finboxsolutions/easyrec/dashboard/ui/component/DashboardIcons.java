@@ -51,6 +51,8 @@ public final class DashboardIcons {
     public static final Icon ICON_CALENDAR = icon(AwesomeUnicodeConstants.FA_CALENDAR_O, GuiPreferences.DARK_GRAY);
     public static final Icon ICON_OPEN = icon(AwesomeUnicodeConstants.FA_LIST, GuiPreferences.COLOR_BLUE);
 
+    public static final Icon ICON_DELETE = icon(AwesomeUnicodeConstants.FA_TRASH_O, GuiPreferences.COLOR_RED);
+
     /** Editing one field in place: the pencil, then commit or discard. */
     public static final Icon ICON_EDIT = icon(AwesomeUnicodeConstants.FA_PENCIL, GuiPreferences.COLOR_BLUE);
     public static final Icon ICON_SAVE = icon(AwesomeUnicodeConstants.FA_CHECK, GuiPreferences.COLOR_GREEN);

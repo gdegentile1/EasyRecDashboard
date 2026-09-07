@@ -194,12 +194,27 @@ public class DashboardPanel extends JPanel implements DashboardNavigator {
     }
 
     @Override
-    public void showReconciliation(int runId, int templateId) {
-        push(RECONCILIATION, () -> showReconciliation(runId, templateId),
-                "Run " + runId + " \u2022 template " + templateId,
+    public void showReconciliation(int runId, int templateId, String templateName) {
+        push(RECONCILIATION, () -> showReconciliation(runId, templateId, templateName),
+                crumbFor(runId, templateId, templateName),
                 DashboardIcons.ICON_RECONCILIATION);
         cards.show(content, RECONCILIATION);
         reconciliationView.load(runId, templateId);
+    }
+
+    /**
+     * What a reconciliation is called in the trail.
+     *
+     * <p>"Run 16 - template 3" identifies the row and says nothing about it, so the file name
+     * leads: it is what the reader recognises. The two ids stay behind it. They are not
+     * decoration - the run id is what a reconciliation gets quoted by, and the template id
+     * separates two runs of files sharing a name - and the trail is the only place on this
+     * screen either of them appears, since the subtitle carries the template's path.
+     */
+    private static String crumbFor(int runId, int templateId, String templateName) {
+        String name = shortName(templateName);
+        String ids = "run " + runId + " \u2022 template " + templateId;
+        return name.isEmpty() ? ids : name + " \u2022 " + ids;
     }
 
     @Override

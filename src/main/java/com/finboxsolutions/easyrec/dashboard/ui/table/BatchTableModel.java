@@ -18,18 +18,29 @@ public class BatchTableModel extends DashboardTableModel<DashboardService.BatchS
     private static final DateTimeFormatter DATE = DateTimeFormatter.ofPattern("yyyy-MM-dd");
     private static final DateTimeFormatter TIME = DateTimeFormatter.ofPattern("HH:mm:ss");
 
-    /** The fixed columns; the run columns follow, in {@link DashboardService#RUN_COLUMNS} order. */
-    private static final List<String> FIXED_COLUMNS = List.of(
+    /** What identifies a batch and how it turned out, before the run columns. */
+    private static final List<String> LEADING_COLUMNS = List.of(
             "Batch", "Date", "Time", "User", "Status", "Match Rate",
-            "Passed", "Failed", "Duration", "Description");
+            "Passed", "Failed", "Description");
+
+    /**
+     * How long the batch took, kept last.
+     *
+     * <p>It sat between the counts and the description, in the middle of what the reader is
+     * scanning - and it is the one figure on the row that is never the reason for opening a
+     * batch. A run that took four minutes rather than three is worth knowing after the fact,
+     * not while looking for the failures, so it goes to the end where a timing belongs.
+     */
+    private static final String DURATION_COLUMN = "Duration";
 
     public BatchTableModel() {
         super(allColumns());
     }
 
     private static List<String> allColumns() {
-        List<String> all = new ArrayList<>(FIXED_COLUMNS);
+        List<String> all = new ArrayList<>(LEADING_COLUMNS);
         all.addAll(DashboardService.RUN_COLUMNS);
+        all.add(DURATION_COLUMN);
         return all;
     }
 

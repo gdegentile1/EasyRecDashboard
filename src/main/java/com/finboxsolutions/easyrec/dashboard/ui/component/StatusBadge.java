@@ -1,5 +1,7 @@
 package com.finboxsolutions.easyrec.dashboard.ui.component;
 
+import com.finboxsolutions.easyrec.dashboard.model.StatusLabel;
+
 import javax.swing.JLabel;
 import javax.swing.SwingConstants;
 import javax.swing.UIManager;
@@ -79,6 +81,27 @@ public class StatusBadge extends JLabel {
         }
 
         setStatus(status);
+    }
+
+    /**
+     * The badge for one of the dashboard's outcomes, or null where none was recorded.
+     *
+     * <p>The mapping is where the care is. {@code ER_DASHBOARD_*} distinguishes a run that
+     * finished and found breaks from one that could not finish at all - a status code of -1 -
+     * and the badge says so: FAILED and ERROR are separate words on separate colours rather
+     * than one flattened into the other. A status that was never recorded gets no badge: an
+     * absent value is not an outcome, and a SKIPPED badge would claim it was.
+     */
+    public static Status of(StatusLabel label) {
+        if (label == null) {
+            return null;
+        }
+        return switch (label) {
+            case PASSED -> Status.PASSED;
+            case FAILED -> Status.FAILED;
+            case ERROR -> Status.ERROR;
+            case UNKNOWN -> null;
+        };
     }
 
     /** @param status the status to show, or null for a cell with none recorded */

@@ -63,7 +63,8 @@ public class HomeView extends JPanel {
 
     private final BatchTableModel tableModel = new BatchTableModel();
     private final DashboardTable table = Tables.create(tableModel);
-    private final JPanel tableSection = Tables.section("Recent batches", table);
+    private final JPanel tableSection =
+            Tables.section("Recent batches", table, "views/dashboard_main.xml");
 
     private LocalDate from;
     private LocalDate to;

@@ -38,6 +38,17 @@ public final class Tables {
      * {@code PanelPivot} puts round the pivot breakdown.
      */
     public static JPanel section(String title, DashboardTable table) {
+        return section(title, table, null);
+    }
+
+    /**
+     * The same, with a view to apply if one can be found.
+     *
+     * @param viewPath relative to {@code resources/} on the classpath, and to the application
+     *                 directory on disk - {@code views/dashboard_main.xml} and the like
+     */
+    public static JPanel section(String title, DashboardTable table, String viewPath) {
+        table.setViewPath(viewPath);
         return Sections.createFilledSection(title, viewer(table));
     }
 
@@ -57,6 +68,10 @@ public final class Tables {
         // The resize mode the scroll pane chose is revisited on every load, once the packed
         // widths are known; see DashboardTable.pack.
         table.setViewer(viewer);
+        // The columns exist already - every model but the comparison's declares them in its
+        // constructor - so the view is applied here, before the screen attaches the renderers
+        // that are its own to decide.
+        table.applyView();
         return viewer;
     }
 
@@ -100,6 +115,10 @@ public final class Tables {
     public static void refresh(DashboardTable table) {
         table.applyFonts();
         table.syncZoom();
+        // Packed even when a view is in force. A view states which columns are shown, in what
+        // order and with what formatting; it carries no widths, so leaving it to decide them
+        // means every column at a default width and every value truncated. Which is also what
+        // the grid's own importView concludes - it packs after applying a view.
         table.pack();
         table.refreshViewer();
     }

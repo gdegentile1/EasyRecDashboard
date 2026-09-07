@@ -24,6 +24,7 @@ import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 
 /**
  * Every batch, narrowed by date, with the selection that feeds a comparison.
@@ -63,9 +64,19 @@ public class BatchListView extends JPanel {
     private final JButton compareButton = Sections.createButton(DashboardIcons.ICON_COMPARE,
             "Compare selected", "Put the selected batches side by side", null);
 
+    /**
+     * Deletes the selected batches and everything keyed to their runs.
+     *
+     * <p>The only destructive action on the dashboard, and the only one that cannot be
+     * undone, so it asks first and names what it is about to remove.
+     */
+    private final JButton deleteButton = Sections.createButton(DashboardIcons.ICON_DELETE,
+            "Delete selected", "Remove the selected batches and their statistics", null);
+
     private final BatchTableModel tableModel = new BatchTableModel();
     private final DashboardTable table = Tables.create(tableModel);
-    private final JPanel tableSection = Tables.section("Batches", table);
+    private final JPanel tableSection =
+            Tables.section("Batches", table, "views/dashboard_batches.xml");
 
     public BatchListView(DashboardDao dao, DashboardService service, DashboardNavigator navigator) {
         super(new MigLayout("insets 12, fill, wrap 1", "[grow,fill]", "[][grow,fill]"));
@@ -113,6 +124,9 @@ public class BatchListView extends JPanel {
         compareButton.addActionListener(event -> compareSelection());
         section.add(compareButton);
 
+        deleteButton.addActionListener(event -> deleteSelection());
+        section.add(deleteButton, "gapleft 6");
+
         section.add(Sections.createHint("Every other column filters from its own header:"
                 + " click the arrow beside User, Project, Source or Target to pick from the"
                 + " values that column actually holds."), "gapleft 16");
@@ -159,6 +173,10 @@ public class BatchListView extends JPanel {
         compareButton.setText(selected >= 2
                 ? "Compare " + Math.min(selected, CompareService.MAX_COMPARE_BATCHES) + " batches"
                 : "Compare selected");
+
+        // One batch is enough to delete, where two are needed to compare.
+        deleteButton.setEnabled(selected >= 1);
+        deleteButton.setText(selected > 1 ? "Delete " + selected + " batches" : "Delete selected");
     }
 
     private void compareSelection() {
@@ -177,6 +195,85 @@ public class BatchListView extends JPanel {
                     "EasyRec Dashboard", JOptionPane.INFORMATION_MESSAGE);
         }
         navigator.showCompare(chosen);
+    }
+
+    /**
+     * Asks, then deletes.
+     *
+     * <p>The question names the batches rather than counting them: an operator who has just
+     * sorted or filtered a list is one click away from having selected a different row than
+     * the one they think, and the identities are the only thing that catches that. It also
+     * says what goes and what stays, because "delete a batch" does not obviously mean its
+     * statistics and pivot rows go with it, or that the template definitions do not.
+     */
+    private void deleteSelection() {
+        List<DashboardService.BatchSummary> chosen = selectedRows();
+        if (chosen.isEmpty()) {
+            return;
+        }
+        // Named buttons rather than Yes and No, and Cancel is the one holding the focus:
+        // the safe answer should be the one a return key reaches, not the irreversible one.
+        Object[] options = {"Delete", "Cancel"};
+        int answer = JOptionPane.showOptionDialog(this, confirmationFor(chosen),
+                "Delete " + (chosen.size() == 1 ? "a batch" : chosen.size() + " batches"),
+                JOptionPane.DEFAULT_OPTION, JOptionPane.WARNING_MESSAGE, null,
+                options, options[1]);
+        if (answer != 0) {
+            return;
+        }
+
+        List<Integer> batchIds = new ArrayList<>(chosen.size());
+        for (DashboardService.BatchSummary summary : chosen) {
+            batchIds.add(summary.batch().batchId());
+        }
+        DashboardTask.run(this, "The deletion", () -> dao.deleteBatches(batchIds), removed -> {
+            JOptionPane.showMessageDialog(this, report(removed),
+                    "EasyRec Dashboard", JOptionPane.INFORMATION_MESSAGE);
+            reload();
+        });
+    }
+
+    private List<DashboardService.BatchSummary> selectedRows() {
+        List<DashboardService.BatchSummary> chosen = new ArrayList<>();
+        for (int viewRow : table.getSelectedRows()) {
+            chosen.add(tableModel.rowAt(table.convertRowIndexToModel(viewRow)));
+        }
+        return chosen;
+    }
+
+    private static String confirmationFor(List<DashboardService.BatchSummary> chosen) {
+        StringBuilder text = new StringBuilder();
+        text.append(chosen.size() == 1
+                ? "Delete this batch and everything recorded against it?\n\n"
+                : "Delete these " + chosen.size() + " batches and everything recorded"
+                        + " against them?\n\n");
+        for (DashboardService.BatchSummary summary : chosen) {
+            BatchRow batch = summary.batch();
+            text.append("    batch ").append(batch.batchId());
+            if (batch.when() != null) {
+                text.append("   ").append(batch.when().toLocalDate());
+            }
+            if (batch.userName() != null && !batch.userName().isBlank()) {
+                text.append("   ").append(batch.userName().trim());
+            }
+            text.append('\n');
+        }
+        text.append("\nThis removes their runs, their reconciliation context,\n"
+                + "their row and column statistics and their pivot breakdown.\n"
+                + "Template definitions are kept.\n\nIt cannot be undone.");
+        return text.toString();
+    }
+
+    private static String report(Map<String, Integer> removed) {
+        int total = 0;
+        StringBuilder text = new StringBuilder("Deleted.\n\n");
+        for (Map.Entry<String, Integer> entry : removed.entrySet()) {
+            text.append("    ").append(entry.getKey()).append("   ")
+                    .append(entry.getValue()).append('\n');
+            total += entry.getValue();
+        }
+        return total == 0 ? "Nothing was deleted: those batches are no longer there."
+                : text.toString();
     }
 
     private static LocalDate parse(String raw) {

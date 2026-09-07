@@ -9,11 +9,13 @@ import java.util.List;
 /**
  * Small JDBC helpers shared by the dashboard queries.
  *
- * <p>Two things here are not incidental. The getters return boxed nulls instead of
+ * <p>Three things here are not incidental. The getters return boxed nulls instead of
  * {@code getInt}'s silent zero, because a null STATUS and a STATUS of 0 mean different
- * things in these tables. And {@link #chunks(Collection)} splits an id list into batches
+ * things in these tables. {@link #chunks(Collection)} splits an id list into batches
  * small enough for Oracle's 1000-element IN limit, which the dashboard reaches easily: a
  * single run in the sample data carries 29 context rows and 4 196 column-statistic rows.
+ * And {@link #epochMillis} reads a temporal column by type rather than by text, which is
+ * what makes a date reach the screen at all.
  */
 public final class Sql {
 
@@ -83,14 +85,67 @@ public final class Sql {
     }
 
     /**
-     * SYS_DATE / SYS_TIME as epoch milliseconds.
+     * The first of {@code columns} that yields an instant, as epoch milliseconds.
      *
-     * <p>Both columns hold an epoch-millisecond string and either may be blank, so the
-     * first usable one wins, as EasyRec's own readers do.
+     * <p>SYS_TIME and SYS_DATE are temporal columns, not text. {@code BatchDaoImpl} writes
+     * them as {@code setTimestamp} and {@code setDate} of the same instant, and the shipped
+     * DDL declares them {@code TIMESTAMP} and {@code date} in every dialect - so SYS_TIME is
+     * the whole instant and SYS_DATE is that instant with the time thrown away. Callers ask
+     * for SYS_TIME first for that reason.
+     *
+     * <p>Read by type rather than as a string. Reading these as text and parsing them as
+     * epoch milliseconds - which is what this did - returns null for every row on every
+     * database, which leaves every batch without a date and every date filter excluding
+     * everything: an empty home screen and a range filter that finds nothing.
+     *
+     * <p>The epoch-string branch is kept for a deployment whose columns are still character,
+     * and the {@code getTimestamp} fallback for a driver that hands its own class back from
+     * {@code getObject} - Oracle's {@code oracle.sql.TIMESTAMP} being the one to expect.
      */
-    public static Long epochMillis(ResultSet rows, String first, String second) throws SQLException {
-        Long parsed = parseEpoch(rows.getString(first));
-        return parsed != null ? parsed : parseEpoch(rows.getString(second));
+    public static Long epochMillis(ResultSet rows, String... columns) throws SQLException {
+        for (String column : columns) {
+            Long millis = instantOf(rows, column);
+            if (millis != null) {
+                return millis;
+            }
+        }
+        return null;
+    }
+
+    private static Long instantOf(ResultSet rows, String column) throws SQLException {
+        Object value = rows.getObject(column);
+        if (value == null) {
+            return null;
+        }
+        // java.sql.Date, java.sql.Time and java.sql.Timestamp are all java.util.Date.
+        if (value instanceof java.util.Date date) {
+            return date.getTime();
+        }
+        if (value instanceof java.time.OffsetDateTime offset) {
+            return offset.toInstant().toEpochMilli();
+        }
+        if (value instanceof java.time.LocalDateTime local) {
+            return local.atZone(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli();
+        }
+        if (value instanceof java.time.LocalDate local) {
+            return local.atStartOfDay(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli();
+        }
+        if (value instanceof Number number) {
+            return number.longValue();
+        }
+        Long parsed = parseEpoch(value.toString());
+        return parsed != null ? parsed : fromTimestamp(rows, column);
+    }
+
+    /** A last resort for a driver whose {@code getObject} returns a class of its own. */
+    private static Long fromTimestamp(ResultSet rows, String column) {
+        try {
+            java.sql.Timestamp stamp = rows.getTimestamp(column);
+            return stamp == null ? null : stamp.getTime();
+        } catch (SQLException ignored) {
+            // Not a temporal column, and not a number written as text either.
+            return null;
+        }
     }
 
     private static Long parseEpoch(String raw) {

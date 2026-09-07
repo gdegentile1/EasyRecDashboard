@@ -5,6 +5,8 @@ import com.finboxsolutions.easyrec.dashboard.model.ColumnStats;
 import com.finboxsolutions.easyrec.dashboard.model.PivotRow;
 import com.finboxsolutions.easyrec.dashboard.model.RowStats;
 import com.finboxsolutions.easyrec.dashboard.model.RunContextRow;
+import com.finboxsolutions.easyrec.dashboard.model.RunRow;
+import com.finboxsolutions.easyrec.dashboard.model.StatusLabel;
 import com.finboxsolutions.easyrec.dashboard.model.TemplateRow;
 import com.finboxsolutions.easyrec.dashboard.service.ContextValues;
 import com.finboxsolutions.easyrec.dashboard.service.DashboardService;
@@ -15,6 +17,7 @@ import com.finboxsolutions.easyrec.dashboard.ui.component.KpiCard;
 import com.finboxsolutions.easyrec.dashboard.ui.component.Palette;
 import com.finboxsolutions.easyrec.dashboard.ui.component.Renderers;
 import com.finboxsolutions.easyrec.dashboard.ui.component.Sections;
+import com.finboxsolutions.easyrec.dashboard.ui.component.StatusBadge;
 import com.finboxsolutions.easyrec.dashboard.ui.component.Tables;
 import com.finboxsolutions.easyrec.dashboard.ui.pivot.DashboardPivotPanel;
 import com.finboxsolutions.easyrec.dashboard.ui.table.ColumnStatsTableModel;
@@ -48,6 +51,16 @@ public class ReconciliationView extends JPanel {
     private final JLabel subtitle = new JLabel();
 
     /**
+     * How the run finished, from ER_DASHBOARD_RUN.STATUS.
+     *
+     * <p>EasyRec's own {@code KpiStatus} is the contract for that column: 1 SUCCESS, 0
+     * FAILED, -1 for a run that never reached its end. It is the opposite of the code on the
+     * context row below, which follows the per-template convention where 0 is a match - which
+     * is why the two are read through {@code StatusScope} and never by bare number.
+     */
+    private final StatusBadge runBadge = new StatusBadge(null);
+
+    /**
      * The reconciliation's metadata, in the section panel the options screens use.
      *
      * <p>Six pairs to a row: a name and its value read as one unit, and three units across
@@ -64,7 +77,8 @@ public class ReconciliationView extends JPanel {
 
     private final ColumnStatsTableModel columnModel = new ColumnStatsTableModel();
     private final DashboardTable columnTable = Tables.create(columnModel);
-    private final JPanel columnSection = Tables.section("Column statistics", columnTable);
+    private final JPanel columnSection =
+            Tables.section("Column statistics", columnTable, "views/dashboard_template.xml");
 
     private final DashboardPivotPanel pivotPanel = new DashboardPivotPanel();
 
@@ -94,7 +108,13 @@ public class ReconciliationView extends JPanel {
         labels.setOpaque(false);
         subtitle.setForeground(Palette.muted());
         subtitle.setFont(subtitle.getFont().deriveFont(Font.PLAIN, 11f));
-        labels.add(title);
+
+        JPanel titleRow = new JPanel(new MigLayout("insets 0, gap 0, fillx", "[]10[]push", "[]"));
+        titleRow.setOpaque(false);
+        titleRow.add(title);
+        titleRow.add(runBadge);
+
+        labels.add(titleRow);
         labels.add(subtitle);
 
         bar.add(labels);
@@ -164,6 +184,7 @@ public class ReconciliationView extends JPanel {
                 }
             }
             loaded.put("reconciliation", target);
+            loaded.put("run", dao.findRun(requestedRunId));
             loaded.put("template", dao.findTemplate(requestedTemplateId));
             if (target != null && target.statsTemplateId() != null) {
                 loaded.put("columns", dao.findColumnStats(requestedRunId, target.statsTemplateId()));
@@ -180,17 +201,22 @@ public class ReconciliationView extends JPanel {
     private void apply(Map<String, Object> loaded) {
         DashboardService.Reconciliation rec =
                 (DashboardService.Reconciliation) loaded.get("reconciliation");
+        RunRow run = (RunRow) loaded.get("run");
         TemplateRow template = (TemplateRow) loaded.get("template");
         List<ColumnStats> columns = (List<ColumnStats>) loaded.get("columns");
         List<PivotRow> pivots = (List<PivotRow>) loaded.get("pivots");
 
         title.setText(template == null ? "Template " + templateId : template.shortName());
+        runBadge.setStatus(run == null ? null : StatusBadge.of(run.status()));
+        runBadge.setVisible(run != null);
+        runBadge.setToolTipText(run == null ? null : "How run " + run.runId() + " finished");
         subtitle.setText(template == null || template.fullPath() == null
                 ? "Run " + runId : template.fullPath());
 
         RowStats stats = rec == null ? null : rec.stats();
         applyKpis(stats);
-        applyContext(rec == null ? null : rec.context());
+        applyContext(rec == null ? null : rec.context(),
+                rec == null ? StatusLabel.UNKNOWN : rec.status());
 
         columnModel.setRows(columns);
         Tables.refresh(columnTable);
@@ -231,7 +257,7 @@ public class ReconciliationView extends JPanel {
         card.setDetail(share == null ? " " : String.format(Locale.ROOT, "%.2f%% of rows", share));
     }
 
-    private void applyContext(RunContextRow context) {
+    private void applyContext(RunContextRow context, StatusLabel reconciliationStatus) {
         contextCard.removeAll();
         if (context == null) {
             contextCard.add(new JLabel("No context recorded for this reconciliation."), "span");
@@ -247,7 +273,7 @@ public class ReconciliationView extends JPanel {
             addContextEntry("Priority", ContextValues.clean(context.priority()));
             addContextEntry("Owner", ContextValues.clean(context.userName()));
             addContextEntry("Group", ContextValues.clean(context.groupName()));
-            addContextEntry("Status", context.statusCode() == null ? null : context.status().name());
+            addContextBadge("Status", reconciliationStatus);
             addContextEntry("Due date", context.dueDate() == null ? null : context.dueDate().toString());
             addContextEntry("Description", ContextValues.clean(context.description()));
             if (contextCard.getComponentCount() == 0) {
@@ -256,6 +282,28 @@ public class ReconciliationView extends JPanel {
         }
         contextCard.revalidate();
         contextCard.repaint();
+    }
+
+    /**
+     * The reconciliation's outcome, drawn as the badge the tables use.
+     *
+     * <p>Taken from {@code Reconciliation.status}, which reads ER_DASHBOARD_STAT_ROWS - not
+     * from the STATUS on the context row beside it, which EasyRec inserts as 0 and never
+     * updates, and which therefore read PASSED on every reconciliation on the screen however
+     * many breaks it had found.
+     *
+     * <p>It is the opposite mapping to the run badge in the header - 0 is a match here, 1 a
+     * mismatch - which is why both are read through {@code StatusScope} and never by bare
+     * number.
+     */
+    private void addContextBadge(String label, StatusLabel status) {
+        if (status == null || status == StatusLabel.UNKNOWN) {
+            return;
+        }
+        contextCard.add(Sections.createFieldLabel(label));
+        StatusBadge badge = new StatusBadge(StatusBadge.of(status));
+        badge.setToolTipText("The reconciliation's own outcome, as recorded on its context row");
+        contextCard.add(badge);
     }
 
     private void addContextEntry(String label, String value) {

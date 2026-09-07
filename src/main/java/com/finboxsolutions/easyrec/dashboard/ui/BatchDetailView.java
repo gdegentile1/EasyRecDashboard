@@ -8,23 +8,21 @@ import com.finboxsolutions.easyrec.dashboard.service.DashboardService;
 import com.finboxsolutions.easyrec.dashboard.service.Rates;
 import com.finboxsolutions.common.gui.utils.JSearchTextField;
 import com.finboxsolutions.easyrec.dashboard.ui.component.DashboardIcons;
+import com.finboxsolutions.easyrec.dashboard.ui.component.EditableField;
 import com.finboxsolutions.easyrec.dashboard.ui.component.DashboardTable;
 import com.finboxsolutions.easyrec.dashboard.ui.component.KpiCard;
 import com.finboxsolutions.easyrec.dashboard.ui.component.Palette;
 import com.finboxsolutions.easyrec.dashboard.ui.component.Renderers;
 import com.finboxsolutions.easyrec.dashboard.ui.component.Sections;
+import com.finboxsolutions.easyrec.dashboard.ui.component.StatusBadge;
 import com.finboxsolutions.easyrec.dashboard.ui.component.Tables;
 import com.finboxsolutions.easyrec.dashboard.ui.table.ReconciliationTableModel;
 import net.miginfocom.swing.MigLayout;
 
-import javax.swing.JButton;
 import javax.swing.JLabel;
 import javax.swing.JOptionPane;
 import javax.swing.JPanel;
-import javax.swing.JTextField;
 import java.awt.Font;
-import java.awt.event.KeyAdapter;
-import java.awt.event.KeyEvent;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -48,26 +46,21 @@ public class BatchDetailView extends JPanel {
 
     private final JLabel title = Sections.createTitle("", DashboardIcons.ICON_BATCH);
     private final JLabel subtitle = new JLabel();
+
+    /** The batch's outcome, as the same pill the Status column draws. */
+    private final StatusBadge statusBadge = new StatusBadge(null);
     private final JSearchTextField templateFilter = new JSearchTextField(24);
 
-    /**
-     * The batch's description, read-only until the pencil is pressed.
-     *
-     * <p>The dashboard is a reading screen and this is the one field on it that writes, so
-     * it does not sit there editable waiting to catch a stray keystroke: the pencil arms it,
-     * the tick commits, the cross puts back what was there. That is how EasyRec's own option
-     * panels edit a single field - see {@code DefaultOptionPanel.createEditButton}.
-     */
-    private final JTextField descriptionField = new JTextField(36);
-    private final JButton editButton = Sections.createIconButton(DashboardIcons.ICON_EDIT,
-            "Edit the description", event -> beginEditing());
-    private final JButton saveButton = Sections.createIconButton(DashboardIcons.ICON_SAVE,
-            "Save the description", event -> commitEditing());
-    private final JButton cancelButton = Sections.createIconButton(DashboardIcons.ICON_CANCEL,
-            "Discard the change", event -> cancelEditing());
+    /** The project the batch was run from - ER_DASHBOARD_RUN.PROJECT_PATH. */
+    private final EditableField projectField =
+            new EditableField("Project", "No project", this::saveProject);
 
-    /** What the description was when the field was last loaded or saved. */
-    private String storedDescription = "";
+    /** The batch's description - ER_DASHBOARD_BATCH.DESCRIPTION. */
+    private final EditableField descriptionField =
+            new EditableField("Description", "No description", this::saveDescription);
+
+    /** The runs of the batch on show, which is where a project path is written. */
+    private final transient List<Integer> runIds = new ArrayList<>();
 
     private final KpiCard rateCard = new KpiCard("Match rate", DashboardIcons.ICON_RATE);
     private final KpiCard matchedCard = new KpiCard("Matched rows", DashboardIcons.ICON_ROWS);
@@ -77,7 +70,8 @@ public class BatchDetailView extends JPanel {
 
     private final ReconciliationTableModel tableModel = new ReconciliationTableModel();
     private final DashboardTable table = Tables.create(tableModel);
-    private final JPanel tableSection = Tables.section("Reconciliations", table);
+    private final JPanel tableSection =
+            Tables.section("Reconciliations", table, "views/dashboard_batch.xml");
 
     private int batchId;
 
@@ -95,7 +89,8 @@ public class BatchDetailView extends JPanel {
         Tables.onRowActivated(table, row -> {
             DashboardService.Reconciliation rec = tableModel.rowAt(row);
             if (rec.templateId() != null) {
-                navigator.showReconciliation(rec.runId(), rec.templateId());
+                navigator.showReconciliation(rec.runId(), rec.templateId(),
+                        rec.templatePath());
             }
         });
     }
@@ -118,9 +113,10 @@ public class BatchDetailView extends JPanel {
         labels.setOpaque(false);
         subtitle.setForeground(Palette.muted());
         subtitle.setFont(subtitle.getFont().deriveFont(Font.PLAIN, 11f));
-        labels.add(title);
+        labels.add(buildTitleRow());
         labels.add(subtitle);
-        labels.add(buildDescriptionRow(), "gaptop 4");
+        labels.add(projectField, "gaptop 4, growx");
+        labels.add(descriptionField, "growx");
 
         bar.add(labels, "growx");
 
@@ -135,91 +131,65 @@ public class BatchDetailView extends JPanel {
     }
 
     /**
-     * The description, with the three buttons that edit it.
+     * What the batch is: its reference and its outcome.
      *
-     * <p>In the header rather than folded into the subtitle line beside the date and the
-     * user: it is the one thing on this screen an operator writes, and a field they can type
-     * into has to look like a field, not like the tail of a sentence.
+     * <p>The outcome was a word appended to the reference - "Batch 12 - PASSED" - which reads
+     * as part of the title rather than as a verdict on it. The same pill the Status column
+     * draws says it at a glance, and puts the header and the table in one language.
+     *
+     * <p>The project moved out of this row and into a field of its own below, once it became
+     * something an operator writes rather than only reads. A value that can be typed into has
+     * to look like a field, and it reads better stacked with the description than crammed
+     * beside the reference.
      */
-    private JPanel buildDescriptionRow() {
-        // The cap is on the column, not the field. Capping the component leaves the cell
-        // growing past it, and the buttons follow the cell - stranding them a hand's width
-        // from the field they act on.
-        JPanel row = new JPanel(new MigLayout("insets 0, fillx",
-                "[]6[::760,grow,fill]2[]0[]0[]push", "[]"));
+    private JPanel buildTitleRow() {
+        JPanel row = new JPanel(new MigLayout("insets 0, gap 0, fillx", "[]10[]push", "[]"));
         row.setOpaque(false);
-
-        descriptionField.setToolTipText("The batch's description, as stored on"
-                + " ER_DASHBOARD_BATCH");
-        // A placeholder rather than a HintTextField: that class reports an empty string from
-        // getText whenever the text happens to equal its hint, so a batch actually described
-        // as "No description" would be saved back as nothing. FlatLaf honours this property
-        // and the other look and feels ignore it, which costs a prompt, not a description.
-        descriptionField.putClientProperty("JTextField.placeholderText", "No description");
-        descriptionField.addActionListener(event -> commitEditing());
-        descriptionField.addKeyListener(new KeyAdapter() {
-            @Override
-            public void keyPressed(KeyEvent event) {
-                if (event.getKeyCode() == KeyEvent.VK_ESCAPE) {
-                    cancelEditing();
-                }
-            }
-        });
-
-        row.add(Sections.createFieldLabel("Description"));
-        // Wide enough to hold a sentence; the column caps it short of a monitor's width.
-        row.add(descriptionField, "growx");
-        row.add(editButton);
-        row.add(saveButton);
-        row.add(cancelButton);
-
-        setEditing(false);
+        row.add(title);
+        row.add(statusBadge);
         return row;
     }
 
-    /** Which of the three buttons are on show, and whether the field takes typing. */
-    private void setEditing(boolean editing) {
-        descriptionField.setEditable(editing);
-        descriptionField.setFocusable(editing);
-        editButton.setVisible(!editing);
-        saveButton.setVisible(editing);
-        cancelButton.setVisible(editing);
-    }
-
-    private void beginEditing() {
-        setEditing(true);
-        descriptionField.requestFocusInWindow();
-        descriptionField.selectAll();
-    }
-
-    private void cancelEditing() {
-        descriptionField.setText(storedDescription);
-        setEditing(false);
+    /**
+     * Writes a project path back, off the EDT, onto every run of the batch.
+     *
+     * <p>A batch holds a single run in practice, but the header shows one project for the
+     * batch, so a write from here has to reach whatever the header was summarising or the
+     * two would disagree the moment there were two runs.
+     */
+    private void saveProject(String edited) {
+        if (runIds.isEmpty()) {
+            return;
+        }
+        List<Integer> targets = List.copyOf(runIds);
+        DashboardTask.run(this, "The project of batch " + batchId,
+                () -> dao.updateRunProjectPath(targets, edited),
+                updated -> {
+                    if (updated > 0) {
+                        projectField.saved(edited);
+                    } else {
+                        JOptionPane.showMessageDialog(this,
+                                "The runs of batch " + batchId + " were not found,"
+                                        + " so nothing was saved.",
+                                "EasyRec Dashboard", JOptionPane.WARNING_MESSAGE);
+                    }
+                });
     }
 
     /**
      * Writes the description back, off the EDT.
      *
-     * <p>The field is put back to read-only only once the write has returned, so a save that
+     * <p>The field returns to read-only only once the write has returned, so a save that
      * fails leaves the operator looking at what they typed rather than at the old value with
      * their edit silently gone.
      */
-    private void commitEditing() {
-        if (!descriptionField.isEditable()) {
-            return;
-        }
-        String edited = descriptionField.getText().trim();
-        if (edited.equals(storedDescription)) {
-            setEditing(false);
-            return;
-        }
+    private void saveDescription(String edited) {
         int target = batchId;
         DashboardTask.run(this, "The description of batch " + target,
                 () -> dao.updateBatchDescription(target, edited),
                 updated -> {
                     if (updated > 0) {
-                        storedDescription = edited;
-                        setEditing(false);
+                        descriptionField.saved(edited);
                     } else {
                         // No row matched: the batch is gone, or was never there. Saying so is
                         // better than a silent no-op that looks like a save.
@@ -282,15 +252,21 @@ public class BatchDetailView extends JPanel {
         List<RowStats> stats = (List<RowStats>) loaded.get("stats");
         int total = (Integer) loaded.get("total");
 
-        title.setText(batch == null ? "Batch " + batchId
-                : "Batch " + batch.batchId() + "  \u2022  " + batch.status());
+        title.setText("Batch " + (batch == null ? batchId : batch.batchId()));
+        statusBadge.setStatus(batch == null ? null : StatusBadge.of(batch.status()));
+        statusBadge.setVisible(batch != null);
+
         subtitle.setText(batch == null ? " " : describe(batch, runs));
 
-        storedDescription = batch == null || batch.description() == null
-                ? "" : batch.description().trim();
-        descriptionField.setText(storedDescription);
-        setEditing(false);
-        editButton.setEnabled(batch != null);
+        descriptionField.show(batch == null ? null : batch.description());
+        descriptionField.setEditingAllowed(batch != null);
+
+        runIds.clear();
+        for (RunRow run : runs) {
+            runIds.add(run.runId());
+        }
+        projectField.show(projectPathOf(runs));
+        projectField.setEditingAllowed(!runIds.isEmpty());
 
         long matched = 0;
         long breaks = 0;
@@ -321,6 +297,24 @@ public class BatchDetailView extends JPanel {
         Sections.setSectionTitle(tableSection, reconciliations.size() == total
                 ? total + " reconciliations  -  double-click one to open it"
                 : reconciliations.size() + " of " + total + " reconciliations shown");
+    }
+
+    /**
+     * The project path of the batch's run.
+     *
+     * <p>A batch holds a single run, so there is normally one. Where a deployment writes
+     * several, the distinct paths are joined rather than the first one being shown as though
+     * it were the whole story.
+     */
+    private static String projectPathOf(List<RunRow> runs) {
+        List<String> paths = new ArrayList<>();
+        for (RunRow run : runs) {
+            String path = run.projectPath();
+            if (path != null && !path.isBlank() && !paths.contains(path.trim())) {
+                paths.add(path.trim());
+            }
+        }
+        return paths.isEmpty() ? null : String.join("  |  ", paths);
     }
 
     private String describe(BatchRow batch, List<RunRow> runs) {

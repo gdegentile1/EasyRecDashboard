@@ -23,7 +23,7 @@ For a detached window during development: `DashboardLauncher.openWindow(dataSour
 |---|---|
 | `home` | `HomeView` — period buttons, headline KPIs, recent batches |
 | `batch_list` | `BatchListView` — date range, multi-select feeding the comparison |
-| `batch_detail` | `BatchDetailView` — KPIs, an editable description, and the batch's reconciliations |
+| `batch_detail` | `BatchDetailView` — the batch's reference, outcome and project path, KPIs, an editable description, and its reconciliations |
 | `run_template_detail` + `pivot_full` | `ReconciliationView` — context, KPI tiles, column stats, and the existing `ExcelTreeTable` pivot component |
 | `batch_compare` / `template_compare` | `CompareView` — one screen, template level then column level |
 | `batch_history` / `template_history` | `HistoryView` — two trend charts and the executions behind them |
@@ -88,7 +88,9 @@ Two that are now closed:
   `getButtonIncludePivot()`. Every command in `UNSUPPORTED_COMMANDS` is disabled by command
   as well, so a new one added to that set is greyed without a matching accessor.
 
-## The one field the dashboard writes
+## The two things the dashboard writes
+
+Everything else on these screens reads. These two do not, and both ask before they act.
 
 A batch's description is editable from the batch header, through the DAO's
 `updateBatchDescription`. Everything else on these screens is a reading surface, which is why
@@ -105,8 +107,38 @@ when that happens. And the prompt for an empty description is a FlatLaf placehol
 than a `HintTextField`, whose `getText` reports an empty string whenever the text equals its
 hint - which would have saved a batch actually described as "No description" as nothing.
 
-There is no permission check: `UserRightsUtils` lives in the EasyRec module this one does not
-depend on. If the dashboard moves inside it, this is the place to ask.
+### Editing the project
+
+`ER_DASHBOARD_RUN.PROJECT_PATH` is editable from the same header, through
+`updateRunProjectPath`. It takes runs rather than a batch because that is where the column
+lives: the header shows one project for the batch, folded across its runs, so a write from
+there has to reach whatever was folded or the two would disagree the moment a batch held two.
+
+Both fields are the same component, `ui/component/EditableField` - the pencil arms it, the
+tick commits, the cross puts back what was there, Enter is the tick and Escape the cross. The
+saving stays with the caller, because it has to happen off the EDT and the field knows nothing
+about databases.
+
+### Deleting a batch
+
+The batch list deletes the selected batches through `deleteBatches`, which removes their
+runs, context, row and column statistics and pivot rows, children first, in one transaction,
+and deliberately leaves `ER_DASHBOARD_TEMPLATE` alone - templates are shared definitions
+referenced by every run that reconciled them, not rows a batch owns. Measured on the sample
+data, deleting one batch removes 45 pivot rows, 25 column statistics, 5 row statistics, 5
+context rows, 1 run and 1 batch, and leaves all 10 templates.
+
+The question names the batches rather than counting them. An operator who has just sorted or
+filtered a list is one click from having selected a different row than they think, and the
+identities are the only thing that catches that. It also says what goes and what stays,
+because "delete a batch" does not obviously mean the statistics and the pivot breakdown go
+with it, or that the template definitions do not. The buttons are **Delete** and **Cancel**
+rather than Yes and No, and Cancel holds the focus: the safe answer should be the one a
+return key reaches.
+
+There is no permission check on either: `UserRightsUtils` lives in the EasyRec module this one
+does not depend on. If the dashboard moves inside it, `buildDescriptionRow` and
+`deleteSelection` are the two places to ask.
 
 ## The traps carried over from the Django code
 
@@ -119,13 +151,36 @@ record how the execution finished (1 clean, 0 failed). `ER_DASHBOARD_STAT_ROWS` 
 `StatusScope` forces every call site to name its table, so a code can't be read without
 saying which mapping applies. `-1` is an execution error in both and gets its own colour.
 
-**An execution error is on the context row, not the statistics row.** The two reconciliation
-tables only cover the three outcomes together: `ER_DASHBOARD_STAT_ROWS` says whether a
-reconciliation that ran found breaks, but one whose execution did not complete never got as
-far as writing a statistics row, and the `-1` that says so is in `ER_DASHBOARD_RUN_CONTEXT`.
-Reading the statistics alone reports an execution error as "no status recorded" - the one
-outcome an operator most needs to see. `Reconciliation.status` takes an error from either
-side first, then the statistics for anything that ran, then the context row.
+EasyRec says the same thing in `KpiStatus`, which is the contract for the stored codes:
+`SUCCESS = 1`, `FAILED = 0`, and a javadoc warning that "two opposite conventions coexist in
+the codebase", the per-template one being `0` matches, `1` mismatches, `-1` no statistics.
+The reconciliation screen shows both at once and they disagree by design: its header badge is
+the run's status from `ER_DASHBOARD_RUN`, and the Status in its context panel is the
+reconciliation's own from `ER_DASHBOARD_RUN_CONTEXT` - so a run that finished cleanly can
+carry a reconciliation that found breaks, and a bare `1` means opposite things a few
+centimetres apart.
+
+One nuance to weigh: `KpiStatus` names `-1` **RUNNING**, "written on insert, and left as is
+when the execution is aborted before its end", also used for a batch that produced no
+statistics. The dashboard labels it ERROR. That reads correctly for an aborted run and
+misleadingly for one still in flight; `StatusScope.ERROR_CODE` and `StatusBadge.Status` both
+already have the vocabulary to split them if a deployment ever displays a live run.
+
+**`ER_DASHBOARD_RUN_CONTEXT.STATUS` is not an outcome.** `ExecutionContextDaoImpl` inserts a
+hard-coded `0` into it, and nothing in EasyRec ever updates it - the schema carries a select
+and an insert for that table and no update at all. It is an operator-maintained field with no
+operator writing to it yet.
+
+Under the reconciliation mapping a permanent `0` reads as PASSED, so a screen that showed it
+claimed every reconciliation had passed however many breaks it had found. `Reconciliation.status`
+now reads `ER_DASHBOARD_STAT_ROWS` and nothing else - written from `TemplateUtils.getStatus`,
+where 0 is a match, 1 a mismatch and -1 no statistics - and a reconciliation with no statistics
+row is UNKNOWN rather than PASSED, because it has no outcome to report.
+
+This was got wrong once in the other direction. An earlier revision consulted the context row
+first so that a `-1` there would surface as an execution error; since the column is always 0,
+that branch never fired and the fallback turned "no statistics" into PASSED. The lesson is
+about the column, not the mapping: both mappings were right all along.
 
 **Statistics live one TEMPLATE_ID along.** `ER_DASHBOARD_TEMPLATE` holds two rows per
 reconciliation on consecutive ids; the context table points at the first, the statistics
@@ -140,6 +195,18 @@ two-million-row one. `Rates.matchRate` is the only place it is computed.
 `UNMATCH_IMPACT_PCT` from its own summed numerator and denominator; see
 `PivotMetric.derivedFrom()` and `Rates.impactRatio`.
 
+**A run's PROJECT_PATH is not a template path.** `ER_DASHBOARD_RUN.PROJECT_PATH` names the
+project a run was launched from - the **Project** column; `ER_DASHBOARD_TEMPLATE.FULL_PATH`
+names a file that run reconciled - **Template Path**. A batch of twenty templates out of one
+project carries one project path and twenty template paths, so the two sit as separate
+columns and the folding renderer shows the first value and a count of the rest, which is what
+makes the difference visible: one project with no `+n`, twenty template paths with one.
+
+The reconciliation table has a **Project** column of its own, from
+`ER_DASHBOARD_RUN_CONTEXT.NAME`, which is the operator-facing name of a reconciliation rather
+than a path. The two never appear in the same table - the batch tables carry the run columns,
+the reconciliation table the context ones - so one name serves both.
+
 **`FULL_PATH`, not `TEMPLATE_ID`, identifies "the same reconciliation" across batches.**
 EasyRec allocates fresh template rows per run, so ids differ between batches for the same
 file. `CompareService` and `HistoryService` both key on the path.
@@ -151,10 +218,26 @@ that ran half of them would read as a collapse in volume rather than as a smalle
 **`<Undefined>` is not a value.** EasyRec fills unused context columns with it, so it would
 appear as a real project name wherever context is shown. `ContextValues.clean` removes it.
 
-**SYS_DATE is an epoch-millisecond string in a character column.** No cast is portable
-across Oracle, H2 and DuckDB, and one unparseable row would fail the statement, so date
-filtering happens in Java over `ER_DASHBOARD_BATCH`, which is the small table. Everything
-else is queried by id.
+**SYS_DATE and SYS_TIME are temporal columns, and SYS_TIME is the one with the time.**
+`BatchDaoImpl` writes the same instant twice - `setDate` into SYS_DATE, `setTimestamp` into
+SYS_TIME - and the shipped DDL declares them `date` and `TIMESTAMP` in every dialect. So
+SYS_DATE is that instant with the time thrown away, and `Sql.epochMillis` asks for SYS_TIME
+first.
+
+This was got wrong at first, and the way it failed is worth recording. The port had them as
+epoch-millisecond strings in character columns and read them with `getString` plus
+`Long.parseLong`. Against the real schema that returns null for every row on every database,
+so every `BatchRow.when()` was null - and `findBatchesInRange` drops a batch whose date it
+cannot read. The home screen was empty and the batch list's date filter matched nothing,
+neither with any error to go on. The reader now branches on the value's type, keeping the
+epoch-string path for a deployment whose columns are still character, and falling back to
+`getTimestamp` for a driver that returns a class of its own from `getObject` - Oracle's
+`oracle.sql.TIMESTAMP` being the one to expect.
+
+Date filtering still happens in Java over `ER_DASHBOARD_BATCH` rather than in SQL. That was
+originally a way round the parsing, but it stands on its own: the table is small, it is read
+whole for the batch list anyway, and a range predicate in SQL would have to be written per
+dialect. Everything else is queried by id.
 
 ## Verification
 
@@ -206,6 +289,35 @@ What that brings, none of it written here: an Excel filter menu per column offer
 column's distinct values, column show and hide, the right-click column menu, the search
 dialog on Ctrl-F, the row count and the export and clear-filter actions in the status bar.
 
+### The tables load a view when there is one
+
+Each of the four table screens names a view and applies it as it is built:
+
+| screen | view |
+|---|---|
+| home, recent batches | `views/dashboard_main.xml` |
+| batch list | `views/dashboard_batches.xml` |
+| batch detail, reconciliations | `views/dashboard_batch.xml` |
+| reconciliation, column statistics | `views/dashboard_template.xml` |
+
+`TableViewUtils.loadView` looks on the filesystem first and then on the classpath under
+`resources/`, so a deployment overrides a shipped view by dropping a file beside the
+application. A view that is not there is not an error - the log says it looked, and the table
+keeps the columns its model gave it.
+
+Three rules settle what a view decides and what it does not:
+
+- **It is applied once, as the table is built**, not on every load. A view is the default
+  layout; re-applying it would undo a column the reader had widened or hidden. The columns
+  exist that early because every model but the comparison's declares them in its constructor.
+- **The screen's own renderers are attached afterwards**, so they win. A view can say a column
+  is right-aligned with two decimals; it has no way to say a column is a status badge or a
+  match rate coloured by band.
+- **The columns are still packed.** A view states which columns appear, in what order and with
+  what formatting, and carries no widths - so leaving it to decide them means every column at
+  a default width and every value truncated. The grid's own `importView` reaches the same
+  conclusion and packs after applying a view.
+
 ### The renderers are the grid's too
 
 `IntegerCellRenderer`, `PercentCellRenderer` and `NumberCellRenderer` are each a few lines
@@ -222,8 +334,17 @@ something bolted onto `DefaultTableCellRenderer` - whose `setForeground` doubles
 this for every unselected row from now on", which is how a conditional colour leaks down a
 column.
 
-**Status is a badge.** PASSED, FAILED and ERROR are three words on three colours, not two
-words and a silence. Status is the column the eye goes to first on three of these screens,
+**A breadcrumb names the file, not the row.** "Run 16 - template 3" identifies a
+reconciliation and says nothing about it, so the trail leads with the template's file name and
+keeps the id behind it for the case where two runs reconciled files of the same name. The
+caller passes the name because it already has it; looking it up in the navigator would mean a
+query on the EDT to label a breadcrumb.
+
+**Status is a badge**, in the Status column and on the batch header alike - one mapping,
+`StatusBadge.of`, so an outcome reads the same drawn in a cell or on its own. The batch header
+used to append the word to the reference, "Batch 12 - PASSED", which reads as part of the
+title rather than as a verdict on it. PASSED, FAILED and ERROR are three words on three
+colours, not two words and a silence. Status is the column the eye goes to first on three of these screens,
 and a coloured word is a weak signal for it: at a glance it is the same shape as every other
 cell, and red-on-white against green-on-white asks the reader to distinguish two hues of
 text. `StatusBadge` came from a sample as five hard-coded pastel pairs - a light theme
@@ -321,7 +442,7 @@ Five things had to be set against the grid's defaults, each for a reason worth k
   whose value is a `JLabel` - which is every header in this grid, since `ExcelTable`
   decorates them - by its character count rather than its pixel width, so "Match Rate" asks
   for ten pixels and renders as "Mat...".
-- **The resize mode is decided per load.** Auto-resize squeezes the batch list's seventeen
+- **The resize mode is decided per load.** Auto-resize squeezes the batch list's eighteen
   columns into whatever the window is; no auto-resize strands the five-column comparison
   against a band of empty grey. Which is right depends on the data, so it is answered after
   each pack.
@@ -375,8 +496,6 @@ them unreadable after a theme switch, which is the one thing `Palette` exists to
   right constraints - it binds both `RUN_ID` and `TEMPLATE_ID`, since that table has no
   primary key and a `RUN_ID`-only update rewrites every context row of the run - but nothing
   calls it yet. The batch description is the one field the dashboard writes; see below.
-- **Batch deletion.** `deleteBatches` is implemented, children first, in one transaction,
-  and deliberately leaves `ER_DASHBOARD_TEMPLATE` alone. No UI yet.
 - **Pagination.** The batch list reads the whole table, as the Django version effectively
   did at 100 rows. If a production deployment has thousands of batches this is the first
   thing to revisit.

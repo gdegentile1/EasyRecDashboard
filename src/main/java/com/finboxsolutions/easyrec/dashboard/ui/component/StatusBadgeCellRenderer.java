@@ -18,12 +18,8 @@ import java.awt.Font;
  * A filled pill is a different shape, so the failures in a list of forty rows can be counted
  * without reading any of them.
  *
- * <p>The mapping is where the care is. {@code ER_DASHBOARD_*} distinguishes a run that
- * finished and found breaks from a run that could not finish at all - a status code of -1 -
- * and the badge says so: FAILED and ERROR are separate words, and ERROR keeps the amber the
- * dashboard has always given it rather than being flattened into FAILED's red. A status that
- * was never recorded gets no pill: an absent value is not an outcome, and a SKIPPED badge
- * would claim it was.
+ * <p>The mapping itself is {@link StatusBadge#of}, so a status reads the same whether it is
+ * drawn in a cell or, as on the batch header, on its own.
  */
 public class StatusBadgeCellRenderer implements TableCellRenderer {
 
@@ -61,15 +57,7 @@ public class StatusBadgeCellRenderer implements TableCellRenderer {
     }
 
     private static StatusBadge.Status toBadgeStatus(Object value) {
-        if (!(value instanceof StatusLabel label)) {
-            return null;
-        }
-        return switch (label) {
-            case PASSED -> StatusBadge.Status.PASSED;
-            case FAILED -> StatusBadge.Status.FAILED;
-            case ERROR -> StatusBadge.Status.ERROR;
-            case UNKNOWN -> null;
-        };
+        return value instanceof StatusLabel label ? StatusBadge.of(label) : null;
     }
 
     private static String describe(Object value) {

@@ -18,7 +18,12 @@ public interface DashboardNavigator {
     void showBatchDetail(int batchId);
 
     /** One reconciliation, always scoped to a template: a run covers many at once. */
-    void showReconciliation(int runId, int templateId);
+    /**
+     * @param templateName what to call the reconciliation in the trail, or null for its id.
+     *                     The caller passes it because it already has it; looking it up here
+     *                     would mean a query on the EDT to name a breadcrumb.
+     */
+    void showReconciliation(int runId, int templateId, String templateName);
 
     /** This batch's whole reconciliation suite over time. */
     void showBatchHistory(int batchId);
