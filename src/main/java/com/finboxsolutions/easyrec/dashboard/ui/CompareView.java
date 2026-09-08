@@ -174,7 +174,7 @@ public class CompareView extends JPanel {
                                Map<Integer, CompareService.BatchTotals> totals) {
         totalsBar.removeAll();
         totalsBar.setLayout(new MigLayout("insets 0, fillx",
-                "[grow,fill,sg batch]".repeat(Math.max(batches.size(), 1))));
+                "[100:100,grow,fill,sg batch]".repeat(Math.max(batches.size(), 1))));
         for (BatchRow batch : batches) {
             CompareService.BatchTotals found = totals.get(batch.batchId());
             JPanel card = new JPanel(new MigLayout("insets 10, wrap 1", "[grow,fill]"));
@@ -204,6 +204,17 @@ public class CompareView extends JPanel {
             detail.setForeground(Palette.muted());
             detail.setFont(detail.getFont().deriveFont(Font.PLAIN, 11f));
             card.add(detail);
+
+            // How much data each batch actually reconciled. Two batches whose match rates
+            // are a point apart are not comparable at all if one of them ran a tenth of the
+            // volume, and the rate above says nothing about that. The spreads and deltas in
+            // the table below are read against these.
+            JLabel volume = new JLabel(found == null ? " "
+                    : String.format(Locale.ROOT, "%,d source \u2022 %,d target rows",
+                            found.rowsSource(), found.rowsTarget()));
+            volume.setForeground(Palette.muted());
+            volume.setFont(volume.getFont().deriveFont(Font.PLAIN, 11f));
+            card.add(volume);
 
             totalsBar.add(card);
         }

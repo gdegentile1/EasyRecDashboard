@@ -30,12 +30,25 @@ import java.util.Set;
  */
 public class DashboardService {
 
-    /** A batch plus the aggregates the list and home screens show beside it. */
+    /**
+     * A batch plus the aggregates the list and home screens show beside it.
+     *
+     * <p>{@code sourceRows} and {@code targetRows} are the batch's whole volume: every
+     * ER_DASHBOARD_STAT_ROWS row of every run, summed. They were already being computed
+     * here as the denominator of {@code matchRate} and then thrown away, which is why a
+     * screen could show 99% and give no hint whether that was 99% of eight rows or of two
+     * million - the one thing that says whether the rate is worth trusting.
+     *
+     * <p>Both are 0 rather than null for a batch with no statistics, matching the pass and
+     * fail counts beside them.
+     */
     public record BatchSummary(
             BatchRow batch,
             Double matchRate,
             int reconciliationsPassed,
             int reconciliationsFailed,
+            long sourceRows,
+            long targetRows,
             List<RunRow> runs,
             Map<String, String> runCells) {
 
@@ -116,9 +129,16 @@ public class DashboardService {
     public static final List<String> RUN_COLUMNS = List.of("Project", "Template Path",
             "Source Alias", "Source Label", "Target Alias", "Target Label");
 
-    /** The context columns a reconciliation row shows, in display order. */
-    public static final List<String> PROJECT_COLUMNS =
-            List.of("Project", "Source", "Target", "Category 1", "Category 2", "Category 3");
+    /**
+     * The context columns a reconciliation row shows, in display order.
+     *
+     * <p>No Project among them. Every reconciliation on that screen belongs to the one batch
+     * being looked at, so the column repeated a single value down the whole table while the
+     * header above it already carried that value in a field the operator can edit. A column
+     * that never varies within its own screen costs width and says nothing.
+     */
+    public static final List<String> CONTEXT_COLUMNS =
+            List.of("Source", "Target", "Category 1", "Category 2", "Category 3");
 
     private final DashboardDao dao;
     private final ZoneId zone;
@@ -245,7 +265,10 @@ public class DashboardService {
             summaries.add(new BatchSummary(
                     batch,
                     total == null ? null : Rates.matchRate(total[0], total[1], total[2]),
-                    counts[0], counts[1], runs,
+                    counts[0], counts[1],
+                    total == null ? 0L : total[1],
+                    total == null ? 0L : total[2],
+                    runs,
                     foldRunCells(runs, templates)));
         }
         return summaries;

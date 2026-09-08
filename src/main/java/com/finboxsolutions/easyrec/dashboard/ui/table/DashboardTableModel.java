@@ -25,6 +25,17 @@ public abstract class DashboardTableModel<T> extends ExcelTableModel {
 
     private static final long serialVersionUID = 1L;
 
+    /**
+     * A heading two models share, so the same measure is not called two things.
+     *
+     * <p>ER_DASHBOARD_STAT_ROWS.ROWS_SOURCE and ROWS_TARGET: the batch list totals them over
+     * a batch, the batch screen breaks the same total down per template. A reader moving
+     * between the two screens is looking at one number twice, and it has to be spelled the
+     * same way in both places for that to be apparent.
+     */
+    public static final String SOURCE_ROWS = "Source Rows";
+    public static final String TARGET_ROWS = "Target Rows";
+
     private final transient List<T> records = new ArrayList<>();
     private final List<String> columns = new ArrayList<>();
 

@@ -26,6 +26,7 @@ import net.miginfocom.swing.MigLayout;
 import javax.swing.JLabel;
 import javax.swing.JPanel;
 import javax.swing.JSplitPane;
+import javax.swing.SwingUtilities;
 import java.awt.Font;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -80,7 +81,17 @@ public class ReconciliationView extends JPanel {
     private final JPanel columnSection =
             Tables.section("Column statistics", columnTable, "views/dashboard_template.xml");
 
+    // The pivot half is EasyRec's own component, action bar included, so it carries its own
+    // toolbar and is framed rather than titled.
     private final DashboardPivotPanel pivotPanel = new DashboardPivotPanel();
+    private final JPanel pivotSection = Sections.createFilledSection("Pivot breakdown", pivotPanel);
+
+    private final JSplitPane split =
+            new JSplitPane(JSplitPane.VERTICAL_SPLIT, columnSection, pivotSection);
+
+    /** Holds either the split or the column statistics alone - see {@link #showPivot}. */
+    private final JPanel body = new JPanel(new MigLayout("insets 0, fill", "[grow,fill]",
+            "[grow,fill]"));
 
     private int runId;
     private int templateId;
@@ -141,14 +152,42 @@ public class ReconciliationView extends JPanel {
      * <p>A split rather than tabs: the two answer different halves of the same question -
      * which field disagrees, and where - and comparing them is the usual reason to be here.
      */
-    private JSplitPane buildBody() {
-        // The pivot half is EasyRec's own component, action bar included, so it carries its
-        // own toolbar and is framed rather than titled.
-        JPanel pivotSection = Sections.createFilledSection("Pivot breakdown", pivotPanel);
-        JSplitPane split = new JSplitPane(JSplitPane.VERTICAL_SPLIT, columnSection, pivotSection);
+    private JPanel buildBody() {
         split.setResizeWeight(0.5d);
         split.setBorder(null);
-        return split;
+        body.add(split, "grow, push");
+        return body;
+    }
+
+    /**
+     * Whether the screen is a split or just the column statistics.
+     *
+     * <p>A template reconciled without a pivot breakdown - most of them - has nothing to put
+     * in the lower half, and an empty framed panel taking half the screen is worse than
+     * absent: it reads as something that failed to load, and it costs the column statistics
+     * the room they could have had. So the pivot half is removed rather than left blank, and
+     * the table above takes the whole body.
+     *
+     * <p>The check is against the shape already on screen, not against the last value seen,
+     * so re-opening a template that has a breakdown leaves the divider where the reader last
+     * dragged it. It is only reset when the split is coming back after having been taken out,
+     * because a component that has been out of the hierarchy has no layout to return to.
+     */
+    private void showPivot(boolean pivoted) {
+        if (body.getComponentCount() == 1 && (body.getComponent(0) == split) == pivoted) {
+            return;
+        }
+        body.removeAll();
+        if (pivoted) {
+            split.setTopComponent(columnSection);
+            split.setBottomComponent(pivotSection);
+            body.add(split, "grow, push");
+            SwingUtilities.invokeLater(() -> split.setDividerLocation(0.5d));
+        } else {
+            body.add(columnSection, "grow, push");
+        }
+        body.revalidate();
+        body.repaint();
     }
 
     private void applyRenderers() {
@@ -225,6 +264,10 @@ public class ReconciliationView extends JPanel {
         // the pivot component; nothing downstream aggregates again.
         pivotPanel.setTree(PivotTreeBuilder.build(pivots,
                 stats == null ? null : stats.pivotBreakdown()));
+        // Asked of ER_DASHBOARD_PIVOT rather than of the tree above: a breakdown that folds
+        // to nothing is still a breakdown that was recorded, and the reason to show or hide
+        // the panel is whether this reconciliation pivoted at all.
+        showPivot(!pivots.isEmpty());
     }
 
     private void applyKpis(RowStats stats) {

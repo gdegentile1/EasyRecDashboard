@@ -1,6 +1,6 @@
 package com.finboxsolutions.easyrec.dashboard.ui.component;
 
-import com.finboxsolutions.swing.jtable.renderers.PercentCellRenderer;
+import com.finboxsolutions.swing.jtable.renderers.SignedProgressCellRenderer;
 import com.finboxsolutions.swing.jtable.renderers.StandardCellRenderer;
 
 import javax.swing.JTable;
@@ -37,9 +37,22 @@ public final class Renderers {
         return new StatusBadgeCellRenderer();
     }
 
-    /** A match rate as {@code 91.93%}, coloured by band. */
+    /**
+     * A match rate as the application's own progress bar.
+     *
+     * <p>{@code SignedProgressCellRenderer} is what EasyRec draws a rate with elsewhere, and
+     * it does the whole job: it formats the value as a percentage, fills the cell in
+     * proportion to it, and centres the figure over the fill. A column of bars is read at a
+     * glance in a way a column of numbers is not, which is the point of using it here.
+     *
+     * <p>It is fed a fraction, never a percentage. The format underneath is
+     * {@code NumberFormat.getPercentInstance}, which multiplies by 100 itself, and the bar
+     * width is {@code getWidth() * value} - so a cell holding 99.06 would print 9,906% and
+     * ask for a bar ninety-nine cells wide. {@link Rates#fraction} is where the models
+     * convert.
+     */
     public static TableCellRenderer matchRate() {
-        return new PercentRenderer();
+        return new SignedProgressCellRenderer();
     }
 
     /** A count with grouped thousands, right-aligned. */
@@ -127,50 +140,6 @@ public final class Renderers {
             Color colour = foreground.apply(value);
             setForeground(colour != null ? colour : table.getForeground());
             setBackground(table.getBackground());
-        }
-    }
-
-    /**
-     * A match rate, on the grid's own percentage renderer.
-     *
-     * <p>{@code PercentCellRenderer} is what every other percentage column in the
-     * application is drawn with: it carries the locale, the two fraction digits, the
-     * grouping and the right alignment, and a percentage typed the same way everywhere is
-     * one less thing for a reader to check.
-     *
-     * <p>It formats a ratio, because {@code NumberFormat.getPercentInstance} multiplies by a
-     * hundred on the way out. These rates are stored and carried as percentages - the KPI
-     * tiles, the charts and the comparison all read them that way - so the value is divided
-     * here, at the last moment, rather than changing what a match rate means everywhere else
-     * to suit one renderer.
-     */
-    private static final class PercentRenderer extends PercentCellRenderer {
-
-        private static final long serialVersionUID = 1L;
-
-        private static final double PERCENT = 100.0d;
-
-        private PercentRenderer() {
-            getColumnAttribute().setFont(Fonts.cell());
-        }
-
-        @Override
-        protected void setColor(JTable table, Object value, boolean isSelected) {
-            if (isSelected) {
-                setForeground(table.getSelectionForeground());
-                setBackground(table.getSelectionBackground());
-                return;
-            }
-            setForeground(Palette.forRate(value instanceof Number number
-                    ? number.doubleValue() : null));
-            setBackground(table.getBackground());
-        }
-
-        @Override
-        public String toString(Object value) {
-            return value instanceof Number number
-                    ? super.toString(number.doubleValue() / PERCENT)
-                    : "-";
         }
     }
 

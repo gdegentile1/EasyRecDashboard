@@ -42,7 +42,10 @@ public class ColumnStatsTableModel extends DashboardTableModel<ColumnStats> {
             case "Class" -> stats.colClass() == null ? "-" : stats.colClass();
             case "Tolerance" -> stats.colTolerance() == null ? "-" : stats.colTolerance();
             // Stored as a ratio; scaled here for display only.
-            case "Match %" -> stats.matchPercentage();
+            // COL_MATCH_PCT is stored as a ratio, so this column needs no conversion at
+            // all - it is the one figure in the application that was already in the units
+            // the renderer wants. matchPercentage() scales it for the captions instead.
+            case "Match %" -> stats.colMatchPct();
             case "Unmatched" -> stats.colNbUnmatch();
             case "Exact" -> stats.colNbExactMatch();
             case "In Tolerance" -> stats.colNbToleranceMatch();

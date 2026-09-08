@@ -16,6 +16,7 @@ import com.finboxsolutions.easyrec.dashboard.ui.component.Renderers;
 import com.finboxsolutions.easyrec.dashboard.ui.component.Sections;
 import com.finboxsolutions.easyrec.dashboard.ui.component.StatusBadge;
 import com.finboxsolutions.easyrec.dashboard.ui.component.Tables;
+import com.finboxsolutions.easyrec.dashboard.ui.table.DashboardTableModel;
 import com.finboxsolutions.easyrec.dashboard.ui.table.ReconciliationTableModel;
 import net.miginfocom.swing.MigLayout;
 
@@ -63,6 +64,22 @@ public class BatchDetailView extends JPanel {
     private final transient List<Integer> runIds = new ArrayList<>();
 
     private final KpiCard rateCard = new KpiCard("Match rate", DashboardIcons.ICON_RATE);
+
+    /**
+     * How much data the batch reconciled, on each side.
+     *
+     * <p>The match rate above them is a ratio and a ratio hides its own scale: 99% of twelve
+     * rows and 99% of a quarter of a million are the same figure and not the same result.
+     * These say which one is on screen.
+     *
+     * <p>They share an icon on purpose - they are one measure read twice, and the pairing is
+     * the point. The gap between them is reported under the target, because two sides that
+     * disagree on how many rows they even hold is usually a feed problem rather than a
+     * reconciliation one, and it is invisible if the reader has to subtract.
+     */
+    private final KpiCard sourceRowsCard = new KpiCard("Source rows", DashboardIcons.ICON_ROWS);
+    private final KpiCard targetRowsCard = new KpiCard("Target rows", DashboardIcons.ICON_ROWS);
+
     private final KpiCard matchedCard = new KpiCard("Matched rows", DashboardIcons.ICON_ROWS);
     private final KpiCard breaksCard = new KpiCard("Breaks", DashboardIcons.ICON_BREAKS);
     private final KpiCard reconciliationsCard =
@@ -200,10 +217,40 @@ public class BatchDetailView extends JPanel {
                 });
     }
 
+    /**
+     * How the target side differs from the source, in words rather than a signed number.
+     *
+     * <p>Neither side is the right one, so this is stated rather than judged: no green for
+     * more and no red for fewer. It says nothing at all when they agree, which is the case
+     * that needs no comment.
+     */
+    private static String rowGap(long rowsSource, long rowsTarget) {
+        long difference = rowsTarget - rowsSource;
+        if (difference == 0L) {
+            return rowsSource == 0L ? " " : "same as source";
+        }
+        return String.format(Locale.ROOT, "%,d %s than source",
+                Math.abs(difference), difference > 0L ? "more" : "fewer");
+    }
+
+    /**
+     * The headline figures, ordered as the batch is read: how well it matched, how much came
+     * in on each side, how much of it matched, how much broke, and how many reconciliations
+     * it took. The size group keeps all six the same width however long the numbers get.
+     *
+     * <p>The explicit 100px minimum is what stops a caption from resizing the application.
+     * Left to themselves the columns take their minimum from the widest card, the size group
+     * applies that to all six, and a bar six times the widest card is wider than the window -
+     * which does not clip the bar, it widens the whole screen behind it, and the first
+     * casualties are the header field and the table's last column. Stating the minimum means
+     * a caption too long for its card is clipped inside that card, where the damage belongs.
+     */
     private JPanel buildKpiBar() {
-        JPanel bar = new JPanel(new MigLayout("insets 0, fillx",
-                "[grow,fill,sg kpi][grow,fill,sg kpi][grow,fill,sg kpi][grow,fill,sg kpi]"));
+        String column = "[100:100,grow,fill,sg kpi]";
+        JPanel bar = new JPanel(new MigLayout("insets 0, fillx", column.repeat(6)));
         bar.add(rateCard);
+        bar.add(sourceRowsCard);
+        bar.add(targetRowsCard);
         bar.add(matchedCard);
         bar.add(breaksCard);
         bar.add(reconciliationsCard);
@@ -214,7 +261,9 @@ public class BatchDetailView extends JPanel {
         Tables.renderer(table, "Template ID", Renderers.identifier());
         Tables.renderer(table, "Status", Renderers.status());
         Tables.renderer(table, "Match Rate", Renderers.matchRate());
-        for (String column : DashboardService.PROJECT_COLUMNS) {
+        Tables.renderer(table, DashboardTableModel.SOURCE_ROWS, Renderers.count());
+        Tables.renderer(table, DashboardTableModel.TARGET_ROWS, Renderers.count());
+        for (String column : DashboardService.CONTEXT_COLUMNS) {
             Tables.renderer(table, column, Renderers.foldedText());
         }
         Tables.renderer(table, "Template Path", Renderers.foldedText());
@@ -284,11 +333,15 @@ public class BatchDetailView extends JPanel {
                 Palette.forRate(rate));
         rateCard.setDetail(String.format(Locale.ROOT, "over %,d rows",
                 Math.max(rowsSource, rowsTarget)));
+        sourceRowsCard.setValue(String.format(Locale.ROOT, "%,d", rowsSource), Palette.text());
+        sourceRowsCard.setDetail(" ");
+        targetRowsCard.setValue(String.format(Locale.ROOT, "%,d", rowsTarget), Palette.text());
+        targetRowsCard.setDetail(rowGap(rowsSource, rowsTarget));
         matchedCard.setValue(String.format(Locale.ROOT, "%,d", matched), Palette.success());
         matchedCard.setDetail(" ");
         breaksCard.setValue(String.format(Locale.ROOT, "%,d", breaks),
                 breaks == 0L ? Palette.success() : Palette.error());
-        breaksCard.setDetail("missing source, missing target and unmatched");
+        breaksCard.setDetail("missing on either side, and unmatched");
         reconciliationsCard.setValue(String.valueOf(total), Palette.text());
         reconciliationsCard.setDetail(runs.size() + (runs.size() == 1 ? " run" : " runs"));
 

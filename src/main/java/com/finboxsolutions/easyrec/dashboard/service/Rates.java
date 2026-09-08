@@ -28,6 +28,19 @@ public final class Rates {
         return total == 0L ? null : matched * 100.0d / total;
     }
 
+    /**
+     * A percentage as the fraction the grid's percent renderers expect.
+     *
+     * <p>Everything built on {@code PercentCellRenderer} - the progress bars included -
+     * formats with {@code NumberFormat.getPercentInstance}, which multiplies by 100 on the
+     * way out. The dashboard's own figures are percentages, because that is what the cards
+     * and captions print. The two conventions meet here rather than in every model, and a
+     * cell that skips this conversion prints a four-digit percentage.
+     */
+    public static Double fraction(Double percentage) {
+        return percentage == null ? null : percentage / 100.0d;
+    }
+
     public static Tone toneOf(Double rate) {
         if (rate == null) {
             return Tone.NONE;

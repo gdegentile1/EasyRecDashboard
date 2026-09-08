@@ -1,6 +1,7 @@
 package com.finboxsolutions.easyrec.dashboard.ui.table;
 
 import com.finboxsolutions.easyrec.dashboard.service.HistoryService;
+import com.finboxsolutions.easyrec.dashboard.service.Rates;
 
 import java.util.List;
 
@@ -41,7 +42,7 @@ public class HistoryTableModel extends DashboardTableModel<HistoryService.Execut
             case "When" -> execution.longLabel();
             case "Batch" -> execution.batch().batchId();
             case "Reconciliations" -> execution.reconciliations();
-            case "Match Rate" -> execution.matchRate();
+            case "Match Rate" -> Rates.fraction(execution.matchRate());
             case "Rate Change" -> execution.rateDelta();
             case "Breaks" -> execution.breaks();
             case "Breaks Change" -> execution.breaksDelta();

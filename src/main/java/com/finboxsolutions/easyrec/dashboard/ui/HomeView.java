@@ -13,6 +13,7 @@ import com.finboxsolutions.easyrec.dashboard.ui.component.SegmentedControl;
 import com.finboxsolutions.easyrec.dashboard.ui.component.Sections;
 import com.finboxsolutions.easyrec.dashboard.ui.component.Tables;
 import com.finboxsolutions.easyrec.dashboard.ui.table.BatchTableModel;
+import com.finboxsolutions.easyrec.dashboard.ui.table.DashboardTableModel;
 import net.miginfocom.swing.MigLayout;
 
 import javax.swing.JLabel;
@@ -137,6 +138,8 @@ public class HomeView extends JPanel {
         Tables.renderer(table, "Match Rate", Renderers.matchRate());
         Tables.renderer(table, "Passed", Renderers.numeric(0, Palette.success()));
         Tables.renderer(table, "Failed", Renderers.numeric(0, Palette.error()));
+        Tables.renderer(table, DashboardTableModel.SOURCE_ROWS, Renderers.count());
+        Tables.renderer(table, DashboardTableModel.TARGET_ROWS, Renderers.count());
         for (String column : DashboardService.RUN_COLUMNS) {
             Tables.renderer(table, column, Renderers.foldedText());
         }
