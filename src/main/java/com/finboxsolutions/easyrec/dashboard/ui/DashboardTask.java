@@ -1,5 +1,7 @@
 package com.finboxsolutions.easyrec.dashboard.ui;
 
+import com.finboxsolutions.easyrec.dashboard.dao.JdbcDashboardDao.DashboardSchemaMissingException;
+
 import javax.swing.JOptionPane;
 import javax.swing.SwingUtilities;
 import javax.swing.SwingWorker;
@@ -72,11 +74,39 @@ public final class DashboardTask<T> extends SwingWorker<T, Void> {
         }
     }
 
+    /**
+     * Shown instead of the SQL error when the ER_DASHBOARD_* tables do not exist yet. The
+     * first export to the dashboard deploys the schema, so that is the only step to give.
+     */
+    static final String SCHEMA_MISSING_MESSAGE =
+            "The dashboard schema has not been created yet in this database.\n\n"
+            + "It is deployed automatically at the first export: export a reconciliation\n"
+            + "to the dashboard (Export to dashboard, or the batch -dashboard option),\n"
+            + "then open the dashboard again.";
+
     private void report(String what, Throwable failure) {
+        if (isSchemaMissing(failure)) {
+            // Not a defect: a fresh or misconfigured datasource. The stack trace stays in the
+            // log for the case where the dashboard points at the wrong database file.
+            LOGGER.log(Level.WARNING, "Dashboard: " + description + " " + what
+                    + ", dashboard schema not found", failure);
+            JOptionPane.showMessageDialog(owner, SCHEMA_MISSING_MESSAGE,
+                    "EasyRec Dashboard", JOptionPane.WARNING_MESSAGE);
+            return;
+        }
         LOGGER.log(Level.SEVERE, "Dashboard: " + description + " " + what, failure);
         JOptionPane.showMessageDialog(owner,
                 description + " " + what + ".\n" + rootMessage(failure),
                 "EasyRec Dashboard", JOptionPane.ERROR_MESSAGE);
+    }
+
+    private static boolean isSchemaMissing(Throwable failure) {
+        for (Throwable current = failure; current != null; current = current.getCause()) {
+            if (current instanceof DashboardSchemaMissingException) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static String rootMessage(Throwable failure) {

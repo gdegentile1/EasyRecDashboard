@@ -45,6 +45,19 @@ public class JdbcDashboardDao implements DashboardDao {
         }
     }
 
+    /**
+     * The database answered, but an ER_DASHBOARD_* table is not there: the dashboard schema
+     * has not been created on this datasource yet (or only partly). Kept apart from other
+     * failures so the UI can explain the situation instead of showing an SQL error.
+     */
+    public static class DashboardSchemaMissingException extends DashboardDataException {
+        private static final long serialVersionUID = 1L;
+
+        public DashboardSchemaMissingException(String message, Throwable cause) {
+            super(message, cause);
+        }
+    }
+
     private static final String BATCH_COLUMNS =
             "BATCH_ID, VERSION, RUN_MODE, USER_NAME, STATUS, SYS_DATE, SYS_TIME, "
             + "DURATION_MILLISEC, DESCRIPTION, PURGE_STATUS";
@@ -388,7 +401,7 @@ public class JdbcDashboardDao implements DashboardDao {
                 connection.setAutoCommit(previousAutoCommit);
             }
         } catch (SQLException failure) {
-            throw new DashboardDataException("Could not delete batches " + batchIds, failure);
+            throw dataFailure("Could not delete batches " + batchIds, failure);
         }
         return removed;
     }
@@ -434,7 +447,7 @@ public class JdbcDashboardDao implements DashboardDao {
                 }
             }
         } catch (SQLException failure) {
-            throw new DashboardDataException("Query failed: " + sql, failure);
+            throw dataFailure("Query failed: " + sql, failure);
         }
         return results;
     }
@@ -459,8 +472,41 @@ public class JdbcDashboardDao implements DashboardDao {
             binder.bind(statement);
             return statement.executeUpdate();
         } catch (SQLException failure) {
-            throw new DashboardDataException("Update failed: " + sql, failure);
+            throw dataFailure("Update failed: " + sql, failure);
         }
+    }
+
+    /** Wraps an SQL failure, singling out the "dashboard tables not created" case. */
+    private static DashboardDataException dataFailure(String message, SQLException failure) {
+        return isMissingTable(failure)
+                ? new DashboardSchemaMissingException(message, failure)
+                : new DashboardDataException(message, failure);
+    }
+
+    /**
+     * True when the failure is "table or view does not exist", recognised for each
+     * supported back-end, since none of them agree on how to say it:
+     * <ul>
+     *   <li>H2: SQLState 42S02, error code 42102</li>
+     *   <li>Oracle: ORA-00942 (SQLState 42000 is too broad, so the error code decides)</li>
+     *   <li>DuckDB: no SQLState, only a "Catalog Error ... does not exist" message</li>
+     * </ul>
+     */
+    static boolean isMissingTable(SQLException failure) {
+        for (Throwable current = failure; current != null; current = current.getCause()) {
+            if (current instanceof SQLException sql) {
+                if ("42S02".equals(sql.getSQLState())
+                        || sql.getErrorCode() == 42102
+                        || sql.getErrorCode() == 942) {
+                    return true;
+                }
+                String text = sql.getMessage();
+                if (text != null && text.contains("Catalog Error") && text.contains("does not exist")) {
+                    return true;
+                }
+            }
+        }
+        return false;
     }
 
     // ------------------------------------------------------------------------ row readers
