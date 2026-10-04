@@ -2,6 +2,8 @@ package com.finboxsolutions.easyrec.dashboard.dao;
 
 import com.finboxsolutions.easyrec.dashboard.model.BatchRow;
 import com.finboxsolutions.easyrec.dashboard.model.ColumnStats;
+import com.finboxsolutions.easyrec.dashboard.model.PatternRow;
+import com.finboxsolutions.easyrec.dashboard.model.PatternStat;
 import com.finboxsolutions.easyrec.dashboard.model.PivotMetric;
 import com.finboxsolutions.easyrec.dashboard.model.PivotRow;
 import com.finboxsolutions.easyrec.dashboard.model.RowStats;
@@ -82,6 +84,16 @@ public class JdbcDashboardDao implements DashboardDao {
             + "COL_NB_UNMATCH, COL_NB_EXACT_MATCH, COL_NB_TOLERANCE_MATCH, COL_NB_FORCE_MATCH, "
             + "COL_IMPACT, COL_IMPACT_ABS, COL_AVERAGE, COL_STD_DEVIATION, COL_MIN_DIFF_ABS, "
             + "COL_MAX_DIFF_ABS, COL_MIN_DIFF_PCT, COL_MAX_DIFF_PCT";
+
+    /** ER_DASHBOARD_PATTERN, aliased p, then ER_DASHBOARD_PATTERN_STAT, aliased s. */
+    private static final String PATTERN_STAT_COLUMNS =
+            "p.PATTERN_ID, p.TEMPLATE_ID, p.SIGNATURE, p.DESCRIPTION, p.FIRST_SEEN_RUN, "
+            + "p.LINKED_PATTERN_ID, p.ROOT_CAUSE, p.OWNER_NAME, p.TICKET_REF, "
+            + "s.RUN_ID, s.OCCURRENCES, s.ABOVE_THRESHOLD, s.TEMPLATE_CFG_HASH";
+
+    private static final String PATTERN_STAT_FROM =
+            " FROM ER_DASHBOARD_PATTERN_STAT s"
+            + " JOIN ER_DASHBOARD_PATTERN p ON p.PATTERN_ID = s.PATTERN_ID";
 
     /**
      * Which ER_DASHBOARD_PIVOT column backs each measure. Kept as a map so the SELECT list,
@@ -276,6 +288,64 @@ public class JdbcDashboardDao implements DashboardDao {
         return byId;
     }
 
+    // -------------------------------------------------------------------------- patterns
+
+    @Override
+    public Map<Integer, RunRow> findRuns(Collection<Integer> runIds) {
+        Map<Integer, RunRow> byId = new LinkedHashMap<>();
+        for (RunRow run : queryByIds(
+                "SELECT " + RUN_COLUMNS + " FROM ER_DASHBOARD_RUN WHERE RUN_ID IN ",
+                " ORDER BY RUN_ID", runIds, JdbcDashboardDao::readRun)) {
+            byId.put(run.runId(), run);
+        }
+        return byId;
+    }
+
+    @Override
+    public List<PatternStat> findPatternHistory(int templateId) {
+        // No LAG here, although the engine's own read query uses one: the previous count is
+        // a step of the trend, and the trend is the service's - see PatternService.
+        return query("SELECT " + PATTERN_STAT_COLUMNS + PATTERN_STAT_FROM
+                        + " WHERE p.TEMPLATE_ID = ? ORDER BY s.PATTERN_ID, s.RUN_ID",
+                statement -> statement.setInt(1, templateId), JdbcDashboardDao::readPatternStat);
+    }
+
+    @Override
+    public List<PatternStat> findPatternStats(int patternId) {
+        return query("SELECT " + PATTERN_STAT_COLUMNS + PATTERN_STAT_FROM
+                        + " WHERE s.PATTERN_ID = ? ORDER BY s.RUN_ID",
+                statement -> statement.setInt(1, patternId), JdbcDashboardDao::readPatternStat);
+    }
+
+    @Override
+    public PatternRow findPattern(int patternId) {
+        List<PatternRow> found = query(
+                "SELECT p.PATTERN_ID, p.TEMPLATE_ID, p.SIGNATURE, p.DESCRIPTION, p.FIRST_SEEN_RUN, "
+                        + "p.LINKED_PATTERN_ID, p.ROOT_CAUSE, p.OWNER_NAME, p.TICKET_REF "
+                        + "FROM ER_DASHBOARD_PATTERN p WHERE p.PATTERN_ID = ?",
+                statement -> statement.setInt(1, patternId), JdbcDashboardDao::readPattern);
+        return found.isEmpty() ? null : found.get(0);
+    }
+
+    @Override
+    public int updatePatternQualification(int patternId, String rootCause, String ownerName,
+                                          String ticketRef) {
+        // The engine's UPDATE_ER_PATTERN_QUALIFICATION, column for column. A blank is stored
+        // as null so that "never qualified" and "qualification cleared" read the same.
+        return update("UPDATE ER_DASHBOARD_PATTERN SET ROOT_CAUSE = ?, OWNER_NAME = ?, "
+                        + "TICKET_REF = ? WHERE PATTERN_ID = ?",
+                statement -> {
+                    statement.setString(1, blankToNull(rootCause));
+                    statement.setString(2, blankToNull(ownerName));
+                    statement.setString(3, blankToNull(ticketRef));
+                    statement.setInt(4, patternId);
+                });
+    }
+
+    private static String blankToNull(String value) {
+        return value == null || value.isBlank() ? null : value.trim();
+    }
+
     // --------------------------------------------------------------------- filter options
 
     @Override
@@ -379,10 +449,17 @@ public class JdbcDashboardDao implements DashboardDao {
             }
         }
 
+        // Probed before the transaction opens: a failed statement inside it would abort the
+        // whole delete on a back-end that poisons the transaction on error.
+        boolean withPatterns = hasPatternTables();
+
         try (Connection connection = dataSource.getConnection()) {
             boolean previousAutoCommit = connection.getAutoCommit();
             connection.setAutoCommit(false);
             try {
+                if (withPatterns) {
+                    deletePatternRows(connection, runIds, removed);
+                }
                 // Children first: the production schema enforces these constraints even
                 // though a file-backed development database may not.
                 for (String table : List.of("ER_DASHBOARD_PIVOT", "ER_DASHBOARD_STAT_COLS",
@@ -404,6 +481,108 @@ public class JdbcDashboardDao implements DashboardDao {
             throw dataFailure("Could not delete batches " + batchIds, failure);
         }
         return removed;
+    }
+
+    /** True when ER_DASHBOARD_PATTERN and ER_DASHBOARD_PATTERN_STAT both exist. */
+    private boolean hasPatternTables() {
+        try {
+            query("SELECT PATTERN_ID FROM ER_DASHBOARD_PATTERN WHERE 1 = 0", statement -> { },
+                    rows -> null);
+            query("SELECT PATTERN_ID FROM ER_DASHBOARD_PATTERN_STAT WHERE 1 = 0", statement -> { },
+                    rows -> null);
+            return true;
+        } catch (DashboardSchemaMissingException absent) {
+            return false;
+        }
+    }
+
+    /**
+     * Removes the pattern rows keyed to {@code runIds}, before the runs themselves.
+     *
+     * <p>ER_DASHBOARD_PATTERN_STAT goes by RUN_ID like the other statistics. ER_DASHBOARD_PATTERN
+     * is the awkward one: its FIRST_SEEN_RUN references a run, but the pattern belongs to the
+     * template and usually goes on being counted on later runs. So a pattern first seen on a
+     * deleted run is moved to the earliest run that still counts it, which is what the engine
+     * would have recorded had the deleted run never happened, and only a pattern no run counts
+     * any more is removed - after the links pointing at it are cleared, since
+     * LINKED_PATTERN_ID references the same table.
+     */
+    private void deletePatternRows(Connection connection, List<Integer> runIds,
+                                   Map<String, Integer> removed) throws SQLException {
+        removed.merge("ER_DASHBOARD_PATTERN_STAT",
+                deleteByIds(connection, "ER_DASHBOARD_PATTERN_STAT", "RUN_ID", runIds), Integer::sum);
+
+        List<Integer> affected = new ArrayList<>();
+        for (List<Integer> chunk : Sql.chunks(runIds)) {
+            affected.addAll(selectIds(connection, "SELECT PATTERN_ID FROM ER_DASHBOARD_PATTERN "
+                    + "WHERE FIRST_SEEN_RUN IN " + Sql.placeholders(chunk.size()), chunk));
+        }
+        if (affected.isEmpty()) {
+            return;
+        }
+
+        Map<Integer, Integer> earliestRun = new LinkedHashMap<>();
+        for (List<Integer> chunk : Sql.chunks(affected)) {
+            String sql = "SELECT PATTERN_ID, MIN(RUN_ID) AS FIRST_RUN FROM ER_DASHBOARD_PATTERN_STAT "
+                    + "WHERE PATTERN_ID IN " + Sql.placeholders(chunk.size()) + " GROUP BY PATTERN_ID";
+            try (PreparedStatement statement = connection.prepareStatement(sql)) {
+                bindIds(statement, chunk, 1);
+                try (ResultSet rows = statement.executeQuery()) {
+                    while (rows.next()) {
+                        earliestRun.put(rows.getInt("PATTERN_ID"), rows.getInt("FIRST_RUN"));
+                    }
+                }
+            }
+        }
+
+        if (!earliestRun.isEmpty()) {
+            try (PreparedStatement statement = connection.prepareStatement(
+                    "UPDATE ER_DASHBOARD_PATTERN SET FIRST_SEEN_RUN = ? WHERE PATTERN_ID = ?")) {
+                for (Map.Entry<Integer, Integer> entry : earliestRun.entrySet()) {
+                    statement.setInt(1, entry.getValue());
+                    statement.setInt(2, entry.getKey());
+                    statement.addBatch();
+                }
+                statement.executeBatch();
+            }
+        }
+
+        List<Integer> orphans = new ArrayList<>(affected);
+        orphans.removeAll(earliestRun.keySet());
+        if (orphans.isEmpty()) {
+            return;
+        }
+        for (List<Integer> chunk : Sql.chunks(orphans)) {
+            try (PreparedStatement statement = connection.prepareStatement(
+                    "UPDATE ER_DASHBOARD_PATTERN SET LINKED_PATTERN_ID = NULL "
+                            + "WHERE LINKED_PATTERN_ID IN " + Sql.placeholders(chunk.size()))) {
+                bindIds(statement, chunk, 1);
+                statement.executeUpdate();
+            }
+        }
+        removed.merge("ER_DASHBOARD_PATTERN",
+                deleteByIds(connection, "ER_DASHBOARD_PATTERN", "PATTERN_ID", orphans), Integer::sum);
+    }
+
+    private static List<Integer> selectIds(Connection connection, String sql,
+                                           List<Integer> ids) throws SQLException {
+        List<Integer> found = new ArrayList<>();
+        try (PreparedStatement statement = connection.prepareStatement(sql)) {
+            bindIds(statement, ids, 1);
+            try (ResultSet rows = statement.executeQuery()) {
+                while (rows.next()) {
+                    found.add(rows.getInt(1));
+                }
+            }
+        }
+        return found;
+    }
+
+    private static void bindIds(PreparedStatement statement, List<Integer> ids,
+                                int firstParameter) throws SQLException {
+        for (int index = 0; index < ids.size(); index++) {
+            statement.setInt(firstParameter + index, ids.get(index));
+        }
     }
 
     private int deleteByIds(Connection connection, String table, String column,
@@ -612,6 +791,30 @@ public class JdbcDashboardDao implements DashboardDao {
                 Sql.decimal(rows, "COL_MAX_DIFF_ABS"),
                 Sql.decimal(rows, "COL_MIN_DIFF_PCT"),
                 Sql.decimal(rows, "COL_MAX_DIFF_PCT"));
+    }
+
+    private static PatternRow readPattern(ResultSet rows) throws SQLException {
+        return new PatternRow(
+                rows.getInt("PATTERN_ID"),
+                rows.getInt("TEMPLATE_ID"),
+                rows.getString("SIGNATURE"),
+                rows.getString("DESCRIPTION"),
+                Sql.integer(rows, "FIRST_SEEN_RUN"),
+                Sql.integer(rows, "LINKED_PATTERN_ID"),
+                rows.getString("ROOT_CAUSE"),
+                rows.getString("OWNER_NAME"),
+                rows.getString("TICKET_REF"));
+    }
+
+    private static PatternStat readPatternStat(ResultSet rows) throws SQLException {
+        return new PatternStat(
+                rows.getInt("RUN_ID"),
+                readPattern(rows),
+                Sql.count(rows, "OCCURRENCES"),
+                // SMALLINT 1 or 0. Read as a number rather than getBoolean, which not every
+                // driver maps from a SMALLINT.
+                rows.getInt("ABOVE_THRESHOLD") != 0,
+                rows.getString("TEMPLATE_CFG_HASH"));
     }
 
     private static PivotRow readPivot(ResultSet rows) throws SQLException {

@@ -42,6 +42,7 @@ public final class DashboardIcons {
     public static final Icon ICON_RECONCILIATION = icon(AwesomeUnicodeConstants.FA_BALANCE_SCALE, GuiPreferences.COLOR_BLUE);
     public static final Icon ICON_COMPARE = icon(AwesomeUnicodeConstants.FA_EXCHANGE, GuiPreferences.COLOR_BLUE);
     public static final Icon ICON_HISTORY = icon(AwesomeUnicodeConstants.FA_HISTORY, GuiPreferences.COLOR_BLUE);
+    public static final Icon ICON_PATTERN = icon(AwesomeUnicodeConstants.FA_PUZZLE_PIECE, GuiPreferences.COLOR_BLUE);
 
     // ------------------------------------------------------------------------------ actions
 
@@ -71,6 +72,7 @@ public final class DashboardIcons {
     public static final Icon ICON_CLOCK = icon(AwesomeUnicodeConstants.FA_CLOCK_O, GuiPreferences.DARK_GRAY, CAPTION_SIZE);
     public static final Icon ICON_CONTEXT = icon(AwesomeUnicodeConstants.FA_INFO_CIRCLE, GuiPreferences.COLOR_BLUE, CAPTION_SIZE);
     public static final Icon ICON_FORCED = icon(AwesomeUnicodeConstants.FA_CHECK_SQUARE_O, GuiPreferences.COLOR_BLUE, CAPTION_SIZE);
+    public static final Icon ICON_NEW = icon(AwesomeUnicodeConstants.FA_LIGHTBULB_O, GuiPreferences.COLOR_DARK_ORANGE, CAPTION_SIZE);
 
     // ----------------------------------------------------------------------------- movement
 

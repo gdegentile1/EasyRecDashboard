@@ -4,6 +4,7 @@ import java.awt.Color;
 
 import javax.swing.UIManager;
 
+import com.finboxsolutions.easyrec.dashboard.model.PatternTrend;
 import com.finboxsolutions.easyrec.dashboard.model.PivotMetric;
 import com.finboxsolutions.easyrec.dashboard.model.StatusLabel;
 import com.finboxsolutions.easyrec.dashboard.service.Rates;
@@ -112,6 +113,22 @@ public final class Palette {
             // so it gets its own colour rather than reusing FAILED's.
             case ERROR -> warning();
             case UNKNOWN -> muted();
+        };
+    }
+
+    /**
+     * The colour of a pattern's movement: red for growth, amber for something that appeared,
+     * green for something going away, nothing for no movement.
+     */
+    public static Color forTrend(PatternTrend trend) {
+        if (trend == null) {
+            return muted();
+        }
+        return switch (trend) {
+            case INCREASING -> error();
+            case NEW, REAPPEARED -> warning();
+            case DECREASING, RESOLVED -> success();
+            case STABLE, ABSENT -> muted();
         };
     }
 

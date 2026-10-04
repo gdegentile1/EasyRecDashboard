@@ -53,9 +53,22 @@ public class DashboardPivotPanel extends JPanel implements ActionListener {
 
     private static final long serialVersionUID = 1L;
 
-    /** The same view files the live pivot screen uses, so the columns render identically. */
-    private static final String VIEW_RELATIVE = "views/break_statistics_amount.xml";
-    private static final String VIEW_PERCENT = "views/break_statistics_percent.xml";
+    /**
+     * The views, the dashboard's own first and the live pivot screen's as the fallback.
+     *
+     * <p>A view keeps only the columns it names. The stored breakdown's columns once had
+     * names of their own (Total Breaks, Sum SRC, Unmatch Impact...), and the live
+     * {@code break_statistics_*.xml} files, always found inside EasyRec, hid every one of them
+     * and left an empty grid over a correct breakdown. The columns now carry the live names -
+     * Break, Count, Sum Source, Sum Target, Impact, Impact Abs, Impact PCT - so the live files
+     * apply as they are, and a {@code dashboard_pivot_*.xml} beside them overrides them for
+     * the dashboard alone. The live view's Btw bucket columns have no stored counterpart and
+     * are simply not there.
+     */
+    private static final List<String> VIEW_RELATIVE = List.of(
+            "views/dashboard_pivot_amount.xml", "views/break_statistics_amount.xml");
+    private static final List<String> VIEW_PERCENT = List.of(
+            "views/dashboard_pivot_percent.xml", "views/break_statistics_percent.xml");
 
     /** Commands whose meaning depends on recomputing the reconciliation. */
     private static final Set<String> UNSUPPORTED_COMMANDS = Set.of(
@@ -87,7 +100,10 @@ public class DashboardPivotPanel extends JPanel implements ActionListener {
     private transient List<PivotMetric> metrics = PivotMetric.DEFAULT_COLUMNS;
     private transient BreakHandler breakHandler;
 
-    private String view = VIEW_RELATIVE;
+    /** The tooltip of the "Break" column's header, or null. */
+    private String breakdownTooltip;
+
+    private List<String> view = VIEW_RELATIVE;
     private int selectedLevel = 1;
 
     /** Opens the rows behind a pivot cell. See {@link #setBreakHandler}. */
@@ -134,7 +150,16 @@ public class DashboardPivotPanel extends JPanel implements ActionListener {
      * recomputed, so nothing here aggregates.
      */
     public void setTree(PivotTreeBuilder.Tree newTree) {
+        setTree(newTree, null);
+    }
+
+    /**
+     * The same, with ER_DASHBOARD_STAT_ROWS.PIVOT_BREAKDOWN, which the "Break" column's
+     * header shows as its tooltip.
+     */
+    public void setTree(PivotTreeBuilder.Tree newTree, String rawBreakdown) {
         this.tree = newTree;
+        this.breakdownTooltip = DashboardPivotNodes.breakdownTooltip(rawBreakdown);
         removeAll();
         add(actionBar, BorderLayout.NORTH);
 
@@ -149,15 +174,7 @@ public class DashboardPivotPanel extends JPanel implements ActionListener {
         }
 
         setActionBarEnabled(true);
-        FilterableExcelTreeTableModel model = DashboardPivotNodes.toTreeTableModel(newTree, metrics);
-        this.treeTable = new DashboardPivotTable(model);
-        try {
-            // JViewer.setTable is declared to throw, so a failure here has to be handled
-            // rather than propagated: setTree is called from a load callback that cannot
-            // throw, and losing the breakdown should not take the whole screen down.
-            viewer.setTable(treeTable);
-        } catch (Exception failure) {
-            log.error("Could not install the pivot table in the viewer", failure);
+        if (!installTable()) {
             add(emptyLabel, BorderLayout.CENTER);
             setActionBarEnabled(false);
             revalidate();
@@ -172,6 +189,52 @@ public class DashboardPivotPanel extends JPanel implements ActionListener {
         expandTree(selectedLevel);
         revalidate();
         repaint();
+    }
+
+    /**
+     * Builds a fresh table over the current tree and puts it in the viewer.
+     *
+     * <p>JViewer.setTable is declared to throw, so a failure here has to be handled rather
+     * than propagated: setTree is called from a load callback that cannot throw, and losing
+     * the breakdown should not take the whole screen down.
+     */
+    private boolean installTable() {
+        FilterableExcelTreeTableModel model = DashboardPivotNodes.toTreeTableModel(tree, metrics);
+        this.treeTable = new DashboardPivotTable(model);
+        try {
+            viewer.setTable(treeTable);
+        } catch (Exception failure) {
+            log.error("Could not install the pivot table in the viewer", failure);
+            return false;
+        }
+        installHeaderTooltip();
+        applyDefaultRenderers();
+        return true;
+    }
+
+    /**
+     * Shows the breakdown when the pointer is over the "Break" header, nothing elsewhere.
+     *
+     * <p>Set on whatever header the grid installed rather than by replacing it: the grid's
+     * header carries the filter menu. The header asks its renderer for a tooltip first and
+     * falls back to its own, which is what this sets, so a column whose renderer has a
+     * tooltip of its own keeps it.
+     */
+    private void installHeaderTooltip() {
+        javax.swing.table.JTableHeader header = treeTable.getTableHeader();
+        if (header == null) {
+            return;
+        }
+        ExcelTreeTable table = treeTable;
+        header.addMouseMotionListener(new java.awt.event.MouseMotionAdapter() {
+            @Override
+            public void mouseMoved(java.awt.event.MouseEvent event) {
+                int column = header.columnAtPoint(event.getPoint());
+                boolean onTree = column >= 0
+                        && table.convertColumnIndexToModel(column) == 0;
+                header.setToolTipText(onTree ? breakdownTooltip : null);
+            }
+        });
     }
 
     /**
@@ -255,13 +318,59 @@ public class DashboardPivotPanel extends JPanel implements ActionListener {
     }
 
     private void applyView() {
+        String path = firstExisting(view);
+        if (path == null) {
+            return;
+        }
         try {
             // Already on the EDT here, so the view is loaded without another invokeLater.
-            TableViewUtils.loadView(viewer, view, false);
+            TableViewUtils.loadView(viewer, path, false);
         } catch (Exception failure) {
             // A missing or stale view file costs the column layout, not the data, so the
             // table is left as it is rather than the screen failing.
-            log.warn("Could not apply pivot view [{}]", view, failure);
+            log.warn("Could not apply pivot view [{}]", path, failure);
+        }
+        if (treeTable.getColumnCount() == 0 && !tree.isEmpty()) {
+            // A view naming none of these columns hides them all - the tree included - and
+            // leaves a grid that reads as an empty breakdown. The data matters more than the
+            // layout, so the table is rebuilt without the view.
+            log.warn("Pivot view [{}] matches none of the breakdown's columns, ignored", path);
+            if (installTable()) {
+                Fonts.applyTo(treeTable);
+                expandTree(selectedLevel);
+            }
+        }
+    }
+
+    /**
+     * The first of {@code candidates} that exists, where {@code TableViewUtils} looks for
+     * it: on the filesystem, relative to the application directory, then on the classpath
+     * under {@code resources/}.
+     */
+    private static String firstExisting(List<String> candidates) {
+        for (String candidate : candidates) {
+            if (new java.io.File(candidate).isFile()
+                    || DashboardPivotPanel.class.getClassLoader().getResource("resources/" + candidate) != null) {
+                return candidate;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * The renderers the table has before any view: a percentage column drawn as one.
+     *
+     * <p>Impact PCT is handed over as a ratio, as the live pivot does, so without a view it
+     * would print 0.25 for 25%. A view loaded afterwards replaces this with its own.
+     */
+    private void applyDefaultRenderers() {
+        for (PivotMetric metric : PivotMetric.PERCENT_COLUMNS) {
+            for (int index = 0; index < treeTable.getColumnCount(); index++) {
+                if (metric.label().equals(treeTable.getColumnName(index))) {
+                    treeTable.getColumnModel().getColumn(index).setCellRenderer(
+                            com.finboxsolutions.easyrec.dashboard.ui.component.Renderers.matchRate());
+                }
+            }
         }
     }
 

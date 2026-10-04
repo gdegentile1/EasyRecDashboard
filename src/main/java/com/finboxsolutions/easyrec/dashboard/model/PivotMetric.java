@@ -13,12 +13,15 @@ import java.util.List;
  */
 public enum PivotMetric {
 
-    TOTAL_BREAKS("Total Breaks", Tone.BAD, 0),
-    UNMATCH_SUM_S("Sum SRC", Tone.PLAIN, 2),
-    UNMATCH_SUM_T("Sum TGT", Tone.PLAIN, 2),
-    UNMATCH_IMPACT("Unmatch Impact", Tone.SIGNED, 2),
-    UNMATCH_IMPACT_ABS("Unmatch Impact (Abs)", Tone.PLAIN, 2),
-    UNMATCH_IMPACT_PCT("Unmatch Impact Pct", Tone.SIGNED, 2),
+    // The six default columns carry the live pivot's names - Count, Sum Source, Sum Target,
+    // Impact, Impact Abs, Impact PCT - so the two screens read the same and a view saved
+    // from either names the same columns.
+    TOTAL_BREAKS("Count", Tone.BAD, 0),
+    UNMATCH_SUM_S("Sum Source", Tone.PLAIN, 2),
+    UNMATCH_SUM_T("Sum Target", Tone.PLAIN, 2),
+    UNMATCH_IMPACT("Impact", Tone.SIGNED, 2),
+    UNMATCH_IMPACT_ABS("Impact Abs", Tone.PLAIN, 2),
+    UNMATCH_IMPACT_PCT("Impact PCT", Tone.SIGNED, 2),
     MATCH_COUNT("Matched", Tone.GOOD, 0),
     MISSING_SRC_COUNT("Missing Src", Tone.WARN, 0),
     MISSING_TRG_COUNT("Missing Trg", Tone.WARN, 0),
@@ -43,7 +46,10 @@ public enum PivotMetric {
             TOTAL_BREAKS, UNMATCH_SUM_S, UNMATCH_SUM_T,
             UNMATCH_IMPACT, UNMATCH_IMPACT_ABS, UNMATCH_IMPACT_PCT);
 
-    /** Measures held as a ratio but read as a percentage. */
+    /**
+     * Measures held as a ratio but read as a percentage. Handed to the table as the ratio and
+     * drawn with a percentage renderer, never scaled by hand.
+     */
     public static final List<PivotMetric> PERCENT_COLUMNS = List.of(UNMATCH_IMPACT_PCT);
 
     private final String label;

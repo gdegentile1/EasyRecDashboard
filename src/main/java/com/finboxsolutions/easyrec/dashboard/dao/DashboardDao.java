@@ -2,6 +2,8 @@ package com.finboxsolutions.easyrec.dashboard.dao;
 
 import com.finboxsolutions.easyrec.dashboard.model.BatchRow;
 import com.finboxsolutions.easyrec.dashboard.model.ColumnStats;
+import com.finboxsolutions.easyrec.dashboard.model.PatternRow;
+import com.finboxsolutions.easyrec.dashboard.model.PatternStat;
 import com.finboxsolutions.easyrec.dashboard.model.PivotRow;
 import com.finboxsolutions.easyrec.dashboard.model.RowStats;
 import com.finboxsolutions.easyrec.dashboard.model.RunContextRow;
@@ -67,6 +69,36 @@ public interface DashboardDao {
      */
     List<String> findContextValues(String columnName);
 
+    // ---------------------------------------------------------------------------- patterns
+
+    /** Runs by id, keyed by RUN_ID. Ids with no run are absent from the map. */
+    Map<Integer, RunRow> findRuns(Collection<Integer> runIds);
+
+    /**
+     * Every ER_DASHBOARD_PATTERN_STAT row of every pattern of one template, ordered by
+     * (PATTERN_ID, RUN_ID) - the whole history the trends are derived from.
+     *
+     * <p>ER_DASHBOARD_PATTERN and ER_DASHBOARD_PATTERN_STAT come with a later engine than
+     * the other dashboard tables, so a datasource can hold the rest without them. That case
+     * throws {@code DashboardSchemaMissingException} like any missing table; the service
+     * decides it means "no patterns" rather than an error.
+     *
+     * @param templateId the TEMPLATE_ID the statistics are filed under
+     */
+    List<PatternStat> findPatternHistory(int templateId);
+
+    /** One pattern's stat rows, ordered by RUN_ID. */
+    List<PatternStat> findPatternStats(int patternId);
+
+    PatternRow findPattern(int patternId);
+
+    /**
+     * Updates the operator qualification of one pattern: ROOT_CAUSE, OWNER_NAME and
+     * TICKET_REF, written together. Returns the number of rows changed.
+     */
+    int updatePatternQualification(int patternId, String rootCause, String ownerName,
+                                   String ticketRef);
+
     /** Updates DESCRIPTION on one batch. Returns the number of rows changed. */
     int updateBatchDescription(int batchId, String description);
 
@@ -92,6 +124,11 @@ public interface DashboardDao {
      *
      * <p>ER_DASHBOARD_TEMPLATE is deliberately left alone: templates are shared definitions
      * referenced by every run that reconciled them, not rows a batch owns.
+     *
+     * <p>Patterns are shared across runs too, so ER_DASHBOARD_PATTERN only loses the
+     * patterns left with no occurrence row at all. One whose FIRST_SEEN_RUN is deleted but
+     * that was counted on a later run is kept, qualification included, and moved to the
+     * earliest run that still counts it.
      *
      * @return how many rows were removed per table name
      */

@@ -4,6 +4,7 @@ import com.finboxsolutions.easyrec.dashboard.dao.DashboardDao;
 import com.finboxsolutions.easyrec.dashboard.service.CompareService;
 import com.finboxsolutions.easyrec.dashboard.service.DashboardService;
 import com.finboxsolutions.easyrec.dashboard.service.HistoryService;
+import com.finboxsolutions.easyrec.dashboard.service.PatternService;
 import com.finboxsolutions.easyrec.dashboard.ui.component.DashboardIcons;
 import com.finboxsolutions.easyrec.dashboard.ui.component.Palette;
 import com.finboxsolutions.easyrec.dashboard.ui.component.Sections;
@@ -41,6 +42,7 @@ public class DashboardPanel extends JPanel implements DashboardNavigator {
     private static final String RECONCILIATION = "reconciliation";
     private static final String COMPARE = "compare";
     private static final String HISTORY = "history";
+    private static final String PATTERN = "pattern";
 
     /** One entry of the trail: a card, how to reload it, and what to call it. */
     private record Step(String card, Runnable reload, String breadcrumb, Icon icon) {
@@ -61,6 +63,7 @@ public class DashboardPanel extends JPanel implements DashboardNavigator {
     private final DashboardService dashboard;
     private final CompareService compare;
     private final HistoryService historyService;
+    private final PatternService patternService;
 
     private final HomeView homeView;
     private final BatchListView batchListView;
@@ -68,6 +71,7 @@ public class DashboardPanel extends JPanel implements DashboardNavigator {
     private final ReconciliationView reconciliationView;
     private final CompareView compareView;
     private final HistoryView historyView;
+    private final PatternView patternView;
 
     public DashboardPanel(DashboardDao dao) {
         super(new MigLayout("insets 0, fill, wrap 1", "[grow,fill]", "[]0[grow,fill]"));
@@ -75,13 +79,15 @@ public class DashboardPanel extends JPanel implements DashboardNavigator {
         this.dashboard = new DashboardService(dao);
         this.compare = new CompareService(dao, dashboard);
         this.historyService = new HistoryService(dao, dashboard);
+        this.patternService = new PatternService(dao, dashboard);
 
         this.homeView = new HomeView(dao, dashboard, this);
         this.batchListView = new BatchListView(dao, dashboard, this);
         this.batchDetailView = new BatchDetailView(dao, dashboard, this);
-        this.reconciliationView = new ReconciliationView(dao, dashboard, this);
+        this.reconciliationView = new ReconciliationView(dao, dashboard, patternService, this);
         this.compareView = new CompareView(dao, dashboard, compare, this);
         this.historyView = new HistoryView(historyService, this);
+        this.patternView = new PatternView(patternService, this);
 
         this.backButton = Sections.createIconButton(DashboardIcons.ICON_BACK, "Back",
                 event -> goBack());
@@ -92,6 +98,7 @@ public class DashboardPanel extends JPanel implements DashboardNavigator {
         content.add(reconciliationView, RECONCILIATION);
         content.add(compareView, COMPARE);
         content.add(historyView, HISTORY);
+        content.add(patternView, PATTERN);
 
         add(buildToolBar());
         add(content, "grow, push");
@@ -234,6 +241,20 @@ public class DashboardPanel extends JPanel implements DashboardNavigator {
     }
 
     @Override
+    public void showPatternHistory(int patternId, String label) {
+        String name = label == null || label.isBlank() ? "" : abbreviate(label, 48) + " \u2022 ";
+        push(PATTERN, () -> showPatternHistory(patternId, label),
+                name + "pattern " + patternId, DashboardIcons.ICON_PATTERN);
+        cards.show(content, PATTERN);
+        patternView.load(patternId);
+    }
+
+    /** A pattern description can run to a thousand characters; a crumb cannot. */
+    private static String abbreviate(String text, int max) {
+        return text.length() <= max ? text : text.substring(0, max - 1) + "\u2026";
+    }
+
+    @Override
     public void showCompare(List<Integer> batchIds) {
         List<Integer> selection = List.copyOf(batchIds);
         push(COMPARE, () -> showCompare(selection), "Comparing " + selection.size() + " batches",
@@ -315,6 +336,10 @@ public class DashboardPanel extends JPanel implements DashboardNavigator {
     /** Exposed so an embedding frame can reuse the same services. */
     public DashboardService service() {
         return dashboard;
+    }
+
+    public PatternService patterns() {
+        return patternService;
     }
 
     public DashboardDao dao() {

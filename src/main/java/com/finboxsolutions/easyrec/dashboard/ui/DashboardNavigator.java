@@ -31,6 +31,13 @@ public interface DashboardNavigator {
     /** Every execution of one template. */
     void showTemplateHistory(int templateId);
 
+    /**
+     * One pattern over every run that counted it, and its qualification.
+     *
+     * @param label what to call the pattern in the trail, or null for its id
+     */
+    void showPatternHistory(int patternId, String label);
+
     void showCompare(List<Integer> batchIds);
 
     /** Column-level comparison of a single template path across the same selection. */

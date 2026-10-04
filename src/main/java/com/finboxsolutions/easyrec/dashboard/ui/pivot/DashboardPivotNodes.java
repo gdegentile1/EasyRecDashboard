@@ -6,7 +6,6 @@ import com.finboxsolutions.swing.treetable.model.FilterableExcelTreeTableModel;
 import com.finboxsolutions.swing.treetable.node.ExcelNode;
 import com.finboxsolutions.swing.treetable.sorter.ExcelSortableTreeTableNode;
 
-import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -104,29 +103,73 @@ public final class DashboardPivotNodes {
     }
 
     /**
-     * The name of the tree column: the breakdown fields, outermost first.
+     * The name of the tree column, whatever the breakdown: "Break", as on the live pivot.
      *
-     * <p>Named from PIVOT_BREAKDOWN so the header says what the levels actually are, the
-     * same way the live screen does. Levels EasyRec marked as having no source column
-     * contribute nothing to the name.
+     * <p>It used to be the breakdown fields joined - {@code M_TP_PFOLIO} - which made the
+     * header change from one reconciliation to the next and read as a data column rather
+     * than as the tree. The fields are in the header's tooltip instead; see
+     * {@link #breakdownTooltip}.
      */
+    public static final String TREE_COLUMN = "Break";
+
     private static String hierarchicalColumnName(PivotTreeBuilder.Tree tree) {
-        List<String> named = new ArrayList<>();
-        for (PivotTreeBuilder.Level level : tree.levels()) {
-            if (!level.field().isEmpty()) {
-                named.add(level.field());
+        return TREE_COLUMN;
+    }
+
+    /**
+     * What the tree column's header says when hovered: the breakdown, one level per line,
+     * outermost first.
+     *
+     * <p>Read from the raw PIVOT_BREAKDOWN - {@code [==BREAK_TYPE==, M_TP_PFOLIO]} - rather
+     * than from the tree's levels, which leave EasyRec's {@code ==...==} levels unnamed. Those
+     * have no source column behind them, so they are spelled out ("Break type") and marked as
+     * computed by EasyRec; the others are the template's field names as written.
+     *
+     * @return the tooltip, or null when no breakdown was recorded
+     */
+    public static String breakdownTooltip(String rawBreakdown) {
+        if (rawBreakdown == null || rawBreakdown.isBlank()) {
+            return null;
+        }
+        String body = rawBreakdown.trim();
+        if (body.startsWith("[") && body.endsWith("]")) {
+            body = body.substring(1, body.length() - 1);
+        }
+        StringBuilder text = new StringBuilder("<html><b>Pivot breakdown</b>");
+        int level = 0;
+        for (String part : body.split(",")) {
+            String name = part.trim();
+            if (name.isEmpty()) {
+                continue;
+            }
+            text.append("<br>").append(++level).append(". ");
+            if (name.length() > 4 && name.startsWith("==") && name.endsWith("==")) {
+                text.append(escape(humanise(name.substring(2, name.length() - 2))))
+                        .append(" <i>(computed by EasyRec)</i>");
+            } else {
+                text.append(escape(name));
             }
         }
-        return named.isEmpty() ? "Breakdown" : String.join(" / ", named);
+        return level == 0 ? null : text.append("</html>").toString();
+    }
+
+    /** {@code BREAK_TYPE} as "Break type". */
+    private static String humanise(String marker) {
+        String words = marker.replace('_', ' ').trim().toLowerCase(java.util.Locale.ROOT);
+        return words.isEmpty() ? marker : Character.toUpperCase(words.charAt(0)) + words.substring(1);
+    }
+
+    private static String escape(String text) {
+        return text == null ? "" : text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;");
     }
 
     private static Vector<Object> valuesOf(PivotTreeBuilder.Node node, List<PivotMetric> metrics) {
         Vector<Object> values = new Vector<>(metrics.size());
         for (PivotMetric metric : metrics) {
-            double value = node.value(metric);
-            // A ratio is stored as a ratio everywhere and scaled only for display, so the
-            // aggregation that produced a parent's value stays meaningful.
-            values.add(PivotMetric.PERCENT_COLUMNS.contains(metric) ? value * 100.0d : value);
+            // A ratio stays a ratio, as the live pivot hands it over: its percentage column is
+            // drawn by SignedProgressCellRenderer, which multiplies by 100 itself. Scaling it
+            // here as well printed 10,000% once the live view's renderer applied.
+            values.add(node.value(metric));
         }
         return values;
     }

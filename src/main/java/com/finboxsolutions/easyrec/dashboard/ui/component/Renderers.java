@@ -1,5 +1,6 @@
 package com.finboxsolutions.easyrec.dashboard.ui.component;
 
+import com.finboxsolutions.easyrec.dashboard.model.PatternTrend;
 import com.finboxsolutions.swing.jtable.renderers.SignedProgressCellRenderer;
 import com.finboxsolutions.swing.jtable.renderers.StandardCellRenderer;
 
@@ -91,6 +92,12 @@ public final class Renderers {
     /** Text with a tooltip carrying the full value, for columns that fold several. */
     public static TableCellRenderer foldedText() {
         return new FoldedTextRenderer();
+    }
+
+    /** A pattern's movement, as its word in the colour of {@link Palette#forTrend}. */
+    public static TableCellRenderer trend() {
+        return new DashboardRenderer(value -> value instanceof PatternTrend trend
+                ? Palette.forTrend(trend) : null);
     }
 
     /** Right-aligned plain text, for id columns. */

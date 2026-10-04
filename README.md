@@ -24,7 +24,8 @@ For a detached window during development: `DashboardLauncher.openWindow(dataSour
 | `home` | `HomeView` — period buttons, headline KPIs, recent batches |
 | `batch_list` | `BatchListView` — date range, multi-select feeding the comparison |
 | `batch_detail` | `BatchDetailView` — the batch's reference, outcome and project path, KPIs, an editable description, and its reconciliations |
-| `run_template_detail` + `pivot_full` | `ReconciliationView` — context, KPI tiles, column stats, and the existing `ExcelTreeTable` pivot component |
+| `run_template_detail` + `pivot_full` | `ReconciliationView` — context, KPI tiles, column stats, break patterns, and the existing `ExcelTreeTable` pivot component |
+| *(new, no Django route)* | `PatternView` — one pattern's trend over runs and its qualification (root cause, owner, ticket) |
 | `batch_compare` / `template_compare` | `CompareView` — one screen, template level then column level |
 | `batch_history` / `template_history` | `HistoryView` — two trend charts and the executions behind them |
 | `api_chart_data` | gone; the charts read the same in-process objects the tables do |
@@ -34,16 +35,17 @@ For a detached window during development: `DashboardLauncher.openWindow(dataSour
 ## Layout
 
 ```
-model/     records for the seven ER_DASHBOARD_* tables, plus StatusScope
+model/     records for the nine ER_DASHBOARD_* tables, plus StatusScope and PatternTrend
 dao/       DashboardDao + JdbcDashboardDao (portable SQL, bulk-by-id only)
 service/   Rates, ContextValues, TemplateIds, PivotTreeBuilder,
-           DashboardService, CompareService, HistoryService   (no Swing here)
-ui/        the six screens, the navigator, the background-task helper
+           DashboardService, CompareService, HistoryService,
+           PatternService                                     (no Swing here)
+ui/        the seven screens, the navigator, the background-task helper
 ui/component/  Palette, Fonts, Sections, DashboardIcons, DashboardTable,
                KpiCard, TrendChart, Renderers, StatusBadge, SegmentedControl,
                Tables
 ui/pivot/      the adapter onto EasyRec's own pivot component
-ui/table/      DashboardTableModel and the five models over it
+ui/table/      DashboardTableModel and the seven models over it
 ```
 
 The `service` layer is deliberately free of Swing. That is what made it testable, and the
@@ -54,7 +56,22 @@ arithmetic in it is the part that has to agree across four screens.
 `DashboardPivotPanel` is `PanelPivotActionBar` over `ExcelTreeTable` inside a `JViewer`,
 wired the way `PanelPivot` wires them, so a breakdown read on the dashboard behaves like one
 read on a live reconciliation: same level buttons, same expand and collapse, same search
-box, same `views/break_statistics_*.xml` files.
+box. Its tree column is called **Break**, as on the live pivot, and hovering that header
+lists the breakdown levels from `PIVOT_BREAKDOWN` (`==BREAK_TYPE==` spelled out as "Break
+type").
+
+The columns carry the live pivot's names - **Break, Count, Sum Source, Sum Target, Impact,
+Impact Abs, Impact PCT** - so the live screen's `views/break_statistics_*.xml` files apply
+as they are, formatting included; their Btw bucket columns have no stored counterpart and are
+simply absent. A `views/dashboard_pivot_amount.xml` / `_percent.xml` beside them overrides
+them for the dashboard alone. Impact PCT is handed over as a ratio, as the live pivot does,
+because the view's `SignedProgressCellRenderer` multiplies by 100 itself.
+
+The names matter more than they look: a view keeps only the columns it names. When the
+stored columns had names of their own (Total Breaks, Sum SRC, Unmatch Impact...), the live
+view - always found inside EasyRec - hid every one of them and left an empty grid over a
+correct breakdown. As a safety net, a view that matches none of the columns is now ignored
+and the table rebuilt without it.
 
 What differs is the source of the numbers. A live pivot is recomputed from the appender;
 this one was computed when the run happened and read back from `ER_DASHBOARD_PIVOT`. So
@@ -122,9 +139,16 @@ about databases.
 ### Deleting a batch
 
 The batch list deletes the selected batches through `deleteBatches`, which removes their
-runs, context, row and column statistics and pivot rows, children first, in one transaction,
-and deliberately leaves `ER_DASHBOARD_TEMPLATE` alone - templates are shared definitions
-referenced by every run that reconciled them, not rows a batch owns. Measured on the sample
+runs, context, row and column statistics, pivot rows and pattern counts, children first, in
+one transaction, and deliberately leaves `ER_DASHBOARD_TEMPLATE` alone - templates are shared
+definitions referenced by every run that reconciled them, not rows a batch owns.
+
+Patterns are shared the same way, but `ER_DASHBOARD_PATTERN.FIRST_SEEN_RUN` references a run,
+so a pattern first seen in a deleted batch cannot simply stay. It is moved to the earliest
+run that still counts it, keeping its qualification; only a pattern no remaining run counts
+is removed, after any `LINKED_PATTERN_ID` pointing at it is cleared. Without this the delete
+failed on the foreign keys as soon as the pattern export had run once. On a database without
+the pattern tables the step is skipped, probed before the transaction opens. Measured on the sample
 data, deleting one batch removes 45 pivot rows, 25 column statistics, 5 row statistics, 5
 context rows, 1 run and 1 batch, and leaves all 10 templates.
 
@@ -139,6 +163,50 @@ return key reaches.
 There is no permission check on either: `UserRightsUtils` lives in the EasyRec module this one
 does not depend on. If the dashboard moves inside it, `buildDescriptionRow` and
 `deleteSelection` are the two places to ask.
+
+## Break patterns
+
+The engine's pattern export (`PatternDashboardExporter`, opt-in per template with
+`easyrec.dashboard.patterns=true`) writes two tables: `ER_DASHBOARD_PATTERN`, one row per
+pattern identity `(TEMPLATE_ID, SIGNATURE)` plus its qualification, and
+`ER_DASHBOARD_PATTERN_STAT`, the count of every known pattern on every run it covered - zero
+included. The dashboard is their read side.
+
+**Where they show.** The reconciliation screen keeps the column statistics across the full
+width and puts two tabs under them, *Pivot breakdown* and *Patterns (n)*, offering only the
+tabs that have something behind them; the tab the reader picked is kept from one
+reconciliation to the next. The *Patterns* tab lists each pattern counted on the run, its
+trend, the change since the previous run, its share of the rows, and its qualification, under
+a line summing up what moved ("3 detected, 1 new, 1 increasing"). An earlier layout put the
+table beside the column statistics; neither table had the width to be read. Double-clicking a pattern opens `PatternView`: its count on
+every run as a chart and a table, the peak and first sighting, and the three qualification
+fields, edited with the same pencil / tick / cross `EditableField` as the batch header.
+Double-clicking a run there opens that reconciliation.
+
+**Trend is derived, never stored.** `PatternService` walks each pattern's rows in RUN_ID order:
+*New* on its first detection, *Reappeared* when it comes back after a zero, *Resolved* on the
+first zero after a count, *Absent* while it stays at zero, and otherwise *Increasing*,
+*Decreasing* or *Stable* - stable meaning within 10% of the previous count
+(`DEFAULT_STABLE_TOLERANCE`, a constructor argument). "Previous" is the previous run that
+counted the pattern, so a run the export skipped is stepped over rather than read as a drop
+to zero. A change of `TEMPLATE_CFG_HASH` is flagged on the chart tooltip, for the day the
+engine fills that column.
+
+**Patterns are filed under the statistics TEMPLATE_ID.** The engine resolves the pattern's
+template with the same call as `ER_DASHBOARD_STAT_ROWS`, so the reconciliation screen queries
+with `statsTemplateId` (see *Statistics live one TEMPLATE_ID along* below), and `PatternView`
+maps each run back to the context id when it opens a reconciliation.
+
+**A skipped run is said to be skipped.** When the template is tracked but has no row on the
+run - the export skips a truncated or missing diff rather than record false zeros - the tab
+stays, its table empty under "Not exported on this run", instead of reading as "no
+patterns". A template with no pattern history at all, or a database created by an engine
+older than the export, gets no Patterns tab; with no pivot breakdown either, the lower half
+goes and the column statistics take the whole height.
+
+**Not done yet:** setting `LINKED_PATTERN_ID` from the dashboard (the link is shown on
+`PatternView` when the engine or a script sets it), and a cross-template view of one
+signature (the engine's `QUERY_ER_PATTERN_BY_SIGNATURE`).
 
 ## The traps carried over from the Django code
 
@@ -252,6 +320,12 @@ folded metrics, the comparison rows with spread and delta, and the history trend
 `PivotFoldTest` additionally exercises the folding table model against real trees: default
 fold, full expansion, root-total equals leaf-total, and the root filter.
 
+`PatternTest` builds an in-memory H2 database laid out like the two pattern changelogs,
+foreign keys included, and checks every trend rule, the share of rows, the statistics/context
+TEMPLATE_ID mapping, the qualification write (a blank stored as null), the batch delete
+moving `FIRST_SEEN_RUN`, removing an orphaned pattern and clearing a link to it, and a
+database without the pattern tables: 45 checks. Run it with H2 on the classpath.
+
 The Swing layer now compiles against the real workspace projects — `JCommon`, `JFontIcons`
 and `JxTableGrid` — rather than against stubs, and every screen has been run and rendered:
 home, batch list, batch detail, reconciliation (column statistics and the pivot breakdown),
@@ -299,6 +373,7 @@ Each of the four table screens names a view and applies it as it is built:
 | batch list | `views/dashboard_batches.xml` |
 | batch detail, reconciliations | `views/dashboard_batch.xml` |
 | reconciliation, column statistics | `views/dashboard_template.xml` |
+| reconciliation, pivot breakdown | `views/dashboard_pivot_amount.xml` / `_percent.xml`, else the live `break_statistics_amount.xml` / `_percent.xml` |
 
 `TableViewUtils.loadView` looks on the filesystem first and then on the classpath under
 `resources/`, so a deployment overrides a shipped view by dropping a file beside the
