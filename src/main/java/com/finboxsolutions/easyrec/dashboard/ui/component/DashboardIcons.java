@@ -43,6 +43,10 @@ public final class DashboardIcons {
     public static final Icon ICON_COMPARE = icon(AwesomeUnicodeConstants.FA_EXCHANGE, GuiPreferences.COLOR_BLUE);
     public static final Icon ICON_HISTORY = icon(AwesomeUnicodeConstants.FA_HISTORY, GuiPreferences.COLOR_BLUE);
     public static final Icon ICON_PATTERN = icon(AwesomeUnicodeConstants.FA_PUZZLE_PIECE, GuiPreferences.COLOR_BLUE);
+    public static final Icon ICON_LINK = icon(AwesomeUnicodeConstants.FA_CHAIN, GuiPreferences.COLOR_BLUE);
+    public static final Icon ICON_UNLINK = icon(AwesomeUnicodeConstants.FA_CHAIN_BROKEN, GuiPreferences.COLOR_RED);
+    public static final Icon ICON_RULE = icon(AwesomeUnicodeConstants.FA_FILE_CODE_O, GuiPreferences.COLOR_BLUE);
+    public static final Icon ICON_COPY = icon(AwesomeUnicodeConstants.FA_COPY, GuiPreferences.COLOR_BLUE);
 
     // ------------------------------------------------------------------------------ actions
 

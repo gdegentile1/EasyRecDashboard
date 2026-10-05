@@ -25,9 +25,9 @@ For a detached window during development: `DashboardLauncher.openWindow(dataSour
 | `batch_list` | `BatchListView` — date range, multi-select feeding the comparison |
 | `batch_detail` | `BatchDetailView` — the batch's reference, outcome and project path, KPIs, an editable description, and its reconciliations |
 | `run_template_detail` + `pivot_full` | `ReconciliationView` — context, KPI tiles, column stats, break patterns, and the existing `ExcelTreeTable` pivot component |
-| *(new, no Django route)* | `PatternView` — one pattern's trend over runs and its qualification (root cause, owner, ticket) |
+| *(new, no Django route)* | `PatternView` — one pattern's trend over runs (followed through its link), the other templates it was found on, its expected RCA rule name, and the link to an earlier pattern |
 | `batch_compare` / `template_compare` | `CompareView` — one screen, template level then column level |
-| `batch_history` / `template_history` | `HistoryView` — two trend charts and the executions behind them |
+| `batch_history` / `template_history` | `HistoryView` — two trend charts and the executions behind them; a template's adds its breaks with no rule found |
 | `api_chart_data` | gone; the charts read the same in-process objects the tables do |
 | `user_settings` (theme) | gone; the host's look and feel decides |
 | Django auth / admin | gone; EasyRec already knows who the user is |
@@ -35,7 +35,8 @@ For a detached window during development: `DashboardLauncher.openWindow(dataSour
 ## Layout
 
 ```
-model/     records for the nine ER_DASHBOARD_* tables, plus StatusScope and PatternTrend
+model/     records for the nine ER_DASHBOARD_* tables, plus StatusScope, PatternTrend
+           and PatternKind (the description stopgap)
 dao/       DashboardDao + JdbcDashboardDao (portable SQL, bulk-by-id only)
 service/   Rates, ContextValues, TemplateIds, PivotTreeBuilder,
            DashboardService, CompareService, HistoryService,
@@ -45,7 +46,7 @@ ui/component/  Palette, Fonts, Sections, DashboardIcons, DashboardTable,
                KpiCard, TrendChart, Renderers, StatusBadge, SegmentedControl,
                Tables
 ui/pivot/      the adapter onto EasyRec's own pivot component
-ui/table/      DashboardTableModel and the seven models over it
+ui/table/      DashboardTableModel and the eight models over it
 ```
 
 The `service` layer is deliberately free of Swing. That is what made it testable, and the
@@ -105,9 +106,11 @@ Two that are now closed:
   `getButtonIncludePivot()`. Every command in `UNSUPPORTED_COMMANDS` is disabled by command
   as well, so a new one added to that set is greyed without a matching accessor.
 
-## The two things the dashboard writes
+## What the dashboard writes
 
-Everything else on these screens reads. These two do not, and both ask before they act.
+Everything else on these screens reads. The batch description, the project path, a batch
+delete and a pattern link do not, and each asks before it acts. The pattern link is described
+under *Break patterns*.
 
 A batch's description is editable from the batch header, through the DAO's
 `updateBatchDescription`. Everything else on these screens is a reading surface, which is why
@@ -145,7 +148,7 @@ definitions referenced by every run that reconciled them, not rows a batch owns.
 
 Patterns are shared the same way, but `ER_DASHBOARD_PATTERN.FIRST_SEEN_RUN` references a run,
 so a pattern first seen in a deleted batch cannot simply stay. It is moved to the earliest
-run that still counts it, keeping its qualification; only a pattern no remaining run counts
+run that still counts it, keeping its link; only a pattern no remaining run counts
 is removed, after any `LINKED_PATTERN_ID` pointing at it is cleared. Without this the delete
 failed on the foreign keys as soon as the pattern export had run once. On a database without
 the pattern tables the step is skipped, probed before the transaction opens. Measured on the sample
@@ -166,47 +169,93 @@ does not depend on. If the dashboard moves inside it, `buildDescriptionRow` and
 
 ## Break patterns
 
-The engine's pattern export (`PatternDashboardExporter`, opt-in per template with
-`easyrec.dashboard.patterns=true`) writes two tables: `ER_DASHBOARD_PATTERN`, one row per
-pattern identity `(TEMPLATE_ID, SIGNATURE)` plus its qualification, and
+EasyRec's pattern export (`PatternDashboardExporter`, on by default and switched off per
+template with `easyrec.dashboard.patterns=false`) writes two tables in KPI batch runs:
+`ER_DASHBOARD_PATTERN`, one row per pattern identity `(TEMPLATE_ID, SIGNATURE)`, and
 `ER_DASHBOARD_PATTERN_STAT`, the count of every known pattern on every run it covered - zero
-included. The dashboard is their read side.
+included. A pattern is a column, a pattern type and a parameter key ("on `VALUE_DATE`,
+target = source + 1 day"); its scope is not part of it, so it keeps its history when its
+population shifts. EasyRec writes, the dashboard reads.
+
+**No qualification any more.** The pattern table used to carry a root cause, an owner and a
+ticket, edited from `PatternView`. EasyRec dropped those columns and
+`UPDATE_ER_PATTERN_QUALIFICATION`: they duplicated the comments RCA rules already write
+(`@Comment`, `@Assignee`, `@UserRef`...). Explaining a pattern now means creating an RCA rule
+from it **in EasyRec**, which comments every break of the pattern from then on. The dashboard
+cannot draft that rule - the database holds a hash and a display text, not the values a rule
+needs - and it does not show a per-pattern "explained" flag, because nothing records one yet.
+The columns were removed from the changelog, not migrated: a database created before has to be
+recreated from the regenerated Liquibase schema.
 
 **Where they show.** The reconciliation screen keeps the column statistics across the full
 width and puts two tabs under them, *Pivot breakdown* and *Patterns (n)*, offering only the
 tabs that have something behind them; the tab the reader picked is kept from one
 reconciliation to the next. The *Patterns* tab lists each pattern counted on the run, its
-trend, the change since the previous run, its share of the rows, and its qualification, under
-a line summing up what moved ("3 detected, 1 new, 1 increasing"). An earlier layout put the
-table beside the column statistics; neither table had the width to be read. Double-clicking a pattern opens `PatternView`: its count on
-every run as a chart and a table, the peak and first sighting, and the three qualification
-fields, edited with the same pencil / tick / cross `EditableField` as the batch header.
-Double-clicking a run there opens that reconciliation.
+trend, the change since the previous run, its share of the rows, its first run and its link,
+under a line summing up what moved and how many breaks have no rule ("3 detected, 1 new,
+1 increasing - 6 breaks with no rule found"). Double-clicking a pattern opens `PatternView`:
+its signature, the name of its RCA rule, its link, the peak and first sighting, its count on
+every run as a chart - with a second chart of the rate when the runs compared different
+numbers of rows - and two tabs, the runs behind the chart and the other templates the same
+signature was found on. Double-clicking a run opens that reconciliation.
 
 **Trend is derived, never stored.** `PatternService` walks each pattern's rows in RUN_ID order:
-*New* on its first detection, *Reappeared* when it comes back after a zero, *Resolved* on the
-first zero after a count, *Absent* while it stays at zero, and otherwise *Increasing*,
-*Decreasing* or *Stable* - stable meaning within 10% of the previous count
-(`DEFAULT_STABLE_TOLERANCE`, a constructor argument). "Previous" is the previous run that
-counted the pattern, so a run the export skipped is stepped over rather than read as a drop
-to zero. A change of `TEMPLATE_CFG_HASH` is flagged on the chart tooltip, for the day the
-engine fills that column.
+*New* on its first detection, *Reappeared* when it comes back after a zero, *Not detected* on
+the first zero after a count, *Still not detected* while it stays at zero, and otherwise
+*Increasing*, *Decreasing* or *Stable* - stable meaning within 10% of the previous run. When
+the two runs compared different numbers of rows the comparison is on the rate (occurrences /
+rows compared) rather than the count. The 10% is `DEFAULT_STABLE_TOLERANCE`, overridden with
+the system property `easyrec.dashboard.patterns.stableTolerance` or the constructor.
+"Previous" is the previous run that counted the pattern, so a run the export skipped is
+stepped over rather than read as a drop to zero. A change of `TEMPLATE_CFG_HASH` is flagged
+on the chart tooltip, for the day the engine fills that column.
 
-**Patterns are filed under the statistics TEMPLATE_ID.** The engine resolves the pattern's
-template with the same call as `ER_DASHBOARD_STAT_ROWS`, so the reconciliation screen queries
-with `statsTemplateId` (see *Statistics live one TEMPLATE_ID along* below), and `PatternView`
-maps each run back to the context id when it opens a reconciliation.
+**Zero is "not detected", never "resolved".** The engine only reports a rule pattern once it
+reaches its support floor (10 rows or 5% of the column); below that, its breaks fall into the
+column's *No rule found* pattern. So a zero is shown grey, not green, and beside it the
+*Column Unexplained* column gives that column's unexplained count on the same run.
 
-**A skipped run is said to be skipped.** When the template is tracked but has no row on the
-run - the export skips a truncated or missing diff rather than record false zeros - the tab
-stays, its table empty under "Not exported on this run", instead of reading as "no
-patterns". A template with no pattern history at all, or a database created by an engine
-older than the export, gets no Patterns tab; with no pivot breakdown either, the lower half
-goes and the column statistics take the whole height.
+**A skipped run is said to be skipped.** Every known pattern gets a row on a run the export
+covered, so a run with no row at all was skipped - patterns switched off, a diff truncated at
+`PROPERTY_DIFF_MAXROWS`, no diff, or an error - which is not zero. The tab then stays, under
+"No pattern data for this run", instead of an empty list or zeros. A template with no pattern
+history at all, or a database without the pattern tables, gets no Patterns tab.
 
-**Not done yet:** setting `LINKED_PATTERN_ID` from the dashboard (the link is shown on
-`PatternView` when the engine or a script sets it), and a cross-template view of one
-signature (the engine's `QUERY_ER_PATTERN_BY_SIGNATURE`).
+**Template ids.** `ER_DASHBOARD_RUN.TEMPLATE_ID` is the project's main template, a container
+with no statistics; everything per template, patterns included, carries the reconciliation
+template's id, the one on the context row and in `ER_DASHBOARD_STAT_ROWS`. The screens never
+take a template from the run. A change of key or ignore columns gives a template a new id, and
+patterns found after it are new patterns.
+
+**Unexplained trend.** The template history adds a dashed *No rule found* line to its break
+chart: the total of the template's unexplained patterns per execution, what is still to
+investigate. A skipped export is a gap in that line.
+
+**One stopgap: the description.** `ER_DASHBOARD_PATTERN` does not store the column or the type
+of a pattern yet; both only exist inside `DESCRIPTION`
+(`<column> / <type label> / <parameter key>`). `PatternKind` is the one place that reads them
+out of it - anchored on the engine's fixed type labels, since a key may contain ` / ` - and it
+is what recognises an unexplained pattern and builds the RCA rule name. When EasyRec adds the
+`COLUMN_NAME` and `PATTERN_TYPE` columns, `PatternKind.of` is the method to replace.
+
+**RCA rule name.** `PatternView` shows the name EasyRec gives the rule it drafts from a
+pattern, `Pattern_<COLUMN>_<TYPE>_<first 8 of SIGNATURE>`, with a copy button, so it can be
+found or created in EasyRec. Unexplained, row-level and schema patterns get no rule. *Check a
+rules file...* looks for a Groovy rule of that name in a project's XML rules file; an Excel
+rule carries no name, so "not found" never means "not explained".
+
+**Cross-template view.** The *Other templates* tab lists every template the pattern's
+`SIGNATURE` appears on (`QUERY_ER_PATTERN_BY_SIGNATURE`) with its count on the run selected
+in the *Runs* tab, the latest by default: the same cause found on several reconciliations, to
+be fixed once. An empty count is a template with no stat row on that run, not a zero.
+
+**Linking two patterns.** When a cause keeps its meaning but its signature changes - a template
+change, a value mapping gaining a pair - *Link to earlier pattern...* sets `LINKED_PATTERN_ID`
+(`UPDATE_ER_PATTERN_LINK`) to a pattern of the same template or of a template sharing its
+`FULL_PATH`, and *Clear link* sets it back to null. A link to itself or one closing a cycle is
+refused, and nothing is ever linked automatically. `PatternView` follows the link: the earlier
+pattern's runs from before the newer one's first are part of the curve, so it continues across
+the template change.
 
 ## The traps carried over from the Django code
 
@@ -250,10 +299,13 @@ first so that a `-1` there would surface as an execution error; since the column
 that branch never fired and the fallback turned "no statistics" into PASSED. The lesson is
 about the column, not the mapping: both mappings were right all along.
 
-**Statistics live one TEMPLATE_ID along.** `ER_DASHBOARD_TEMPLATE` holds two rows per
-reconciliation on consecutive ids; the context table points at the first, the statistics
-tables at the second. `TemplateIds.resolve` prefers an exact match and falls back to the
-`+1` pairing, so a deployment that writes them consistently keeps working.
+**Statistics used to live one TEMPLATE_ID along.** Earlier engines held two
+`ER_DASHBOARD_TEMPLATE` rows per reconciliation on consecutive ids, the context table pointing
+at the first and the statistics at the second. Current ones file the context row, the
+statistics and the patterns under the same reconciliation template id. `TemplateIds.resolve`
+prefers that exact match and keeps the `+1` pairing as a fallback for old data - but only when
+the neighbouring id is not another reconciliation of the same run, so a template with no
+statistics row never borrows the next one's.
 
 **One definition of match rate.** `matched / max(rows_source, rows_target)`, counts summed
 before dividing. Averaging per-reconciliation rates would weight a two-row template like a
@@ -321,10 +373,13 @@ folded metrics, the comparison rows with spread and delta, and the history trend
 fold, full expansion, root-total equals leaf-total, and the root filter.
 
 `PatternTest` builds an in-memory H2 database laid out like the two pattern changelogs,
-foreign keys included, and checks every trend rule, the share of rows, the statistics/context
-TEMPLATE_ID mapping, the qualification write (a blank stored as null), the batch delete
-moving `FIRST_SEEN_RUN`, removing an orphaned pattern and clearing a link to it, and a
-database without the pattern tables: 45 checks. Run it with H2 on the classpath.
+foreign keys included, and checks every trend rule on counts and on rates, the description
+stopgap and the RCA rule names of the EasyRec sample (`Pattern_VALUE_DATE_DATE_SHIFT_98f55b15`
+and the like), the template id rule, the sample run's six patterns counted 9, 9, 6, 1, 1, 1 on
+template 1 while the run sits on template 2, a skipped export, the unexplained totals, the
+cross-template view, linking and its refusals, a history continued across a link, the batch
+delete moving `FIRST_SEEN_RUN`, removing an orphaned pattern and clearing a link to it, and a
+database without the pattern tables: 92 checks. Run it with H2 on the classpath.
 
 The Swing layer now compiles against the real workspace projects — `JCommon`, `JFontIcons`
 and `JxTableGrid` — rather than against stubs, and every screen has been run and rendered:

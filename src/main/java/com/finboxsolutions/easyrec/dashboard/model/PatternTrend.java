@@ -6,6 +6,11 @@ package com.finboxsolutions.easyrec.dashboard.model;
  * <p>Derived when read and never stored, as ER_DASHBOARD_PATTERN_STAT intends: it depends on
  * which run is the previous one, and on a tolerance that should stay a setting rather than be
  * frozen into the data. See {@code PatternService.trendOf}.
+ *
+ * <p>There is deliberately no "resolved". The engine reports a rule pattern only once it
+ * reaches its support floor (10 rows or 5% of the column); below that its breaks fall into
+ * the column's unexplained pattern. A zero therefore means "not detected", and the breaks may
+ * well still be there.
  */
 public enum PatternTrend {
 
@@ -17,9 +22,9 @@ public enum PatternTrend {
     STABLE("Stable", false),
     DECREASING("Decreasing", false),
     /** Not detected on this run, after being detected on the previous one. */
-    RESOLVED("Resolved", false),
+    NOT_DETECTED("Not detected", false),
     /** Not detected on this run, nor on the previous one. */
-    ABSENT("Absent", false);
+    STILL_NOT_DETECTED("Still not detected", false);
 
     private final String label;
     private final boolean needsAttention;
@@ -40,7 +45,7 @@ public enum PatternTrend {
 
     /** True when the pattern was detected on the run. */
     public boolean isPresent() {
-        return this != RESOLVED && this != ABSENT;
+        return this != NOT_DETECTED && this != STILL_NOT_DETECTED;
     }
 
     /** The label, since the table cells and their filter menu show the value as text. */

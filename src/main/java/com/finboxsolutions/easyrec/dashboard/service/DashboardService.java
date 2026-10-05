@@ -368,6 +368,7 @@ public class DashboardService {
         List<RunContextRow> contexts = dao.findRunContexts(runIds);
         List<RowStats> stats = dao.findRowStats(runIds);
         Map<Integer, Set<Integer>> statsTemplateIds = TemplateIds.statsTemplateIdsByRun(stats);
+        Map<Integer, Set<Integer>> contextTemplateIds = TemplateIds.contextTemplateIdsByRun(contexts);
 
         Map<Long, RowStats> statsByKey = new LinkedHashMap<>();
         for (RowStats row : stats) {
@@ -388,7 +389,8 @@ public class DashboardService {
                 continue;
             }
             Integer statsTemplateId = TemplateIds.resolve(context.templateId(),
-                    statsTemplateIds.getOrDefault(context.runId(), Set.of()));
+                    statsTemplateIds.getOrDefault(context.runId(), Set.of()),
+                    contextTemplateIds.getOrDefault(context.runId(), Set.of()));
             TemplateRow template = context.templateId() == null ? null : templates.get(context.templateId());
             reconciliations.add(new Reconciliation(
                     context.runId(),

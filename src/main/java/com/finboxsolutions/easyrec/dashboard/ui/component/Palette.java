@@ -118,7 +118,10 @@ public final class Palette {
 
     /**
      * The colour of a pattern's movement: red for growth, amber for something that appeared,
-     * green for something going away, nothing for no movement.
+     * green for a decrease, nothing for no movement.
+     *
+     * <p>A pattern no longer detected stays grey, not green: below the engine's support floor
+     * its breaks move to the column's unexplained pattern, so a zero is not a fix.
      */
     public static Color forTrend(PatternTrend trend) {
         if (trend == null) {
@@ -127,8 +130,8 @@ public final class Palette {
         return switch (trend) {
             case INCREASING -> error();
             case NEW, REAPPEARED -> warning();
-            case DECREASING, RESOLVED -> success();
-            case STABLE, ABSENT -> muted();
+            case DECREASING -> success();
+            case STABLE, NOT_DETECTED, STILL_NOT_DETECTED -> muted();
         };
     }
 

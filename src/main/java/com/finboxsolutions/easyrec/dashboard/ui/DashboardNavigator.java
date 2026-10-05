@@ -32,7 +32,7 @@ public interface DashboardNavigator {
     void showTemplateHistory(int templateId);
 
     /**
-     * One pattern over every run that counted it, and its qualification.
+     * One pattern over every run that counted it, its link and the templates sharing it.
      *
      * @param label what to call the pattern in the trail, or null for its id
      */

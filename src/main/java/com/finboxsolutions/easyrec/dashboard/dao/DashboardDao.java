@@ -3,6 +3,7 @@ package com.finboxsolutions.easyrec.dashboard.dao;
 import com.finboxsolutions.easyrec.dashboard.model.BatchRow;
 import com.finboxsolutions.easyrec.dashboard.model.ColumnStats;
 import com.finboxsolutions.easyrec.dashboard.model.PatternRow;
+import com.finboxsolutions.easyrec.dashboard.model.PatternSighting;
 import com.finboxsolutions.easyrec.dashboard.model.PatternStat;
 import com.finboxsolutions.easyrec.dashboard.model.PivotRow;
 import com.finboxsolutions.easyrec.dashboard.model.RowStats;
@@ -15,7 +16,7 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * Read access to the ER_DASHBOARD_* tables, plus the two columns the dashboard writes back.
+ * Read access to the ER_DASHBOARD_* tables, plus the few columns the dashboard writes back.
  *
  * <p>Every lookup takes a collection of ids rather than a single one. The web dashboard
  * this replaces had to be rewritten twice to remove N+1 queries - the template history
@@ -76,28 +77,40 @@ public interface DashboardDao {
 
     /**
      * Every ER_DASHBOARD_PATTERN_STAT row of every pattern of one template, ordered by
-     * (PATTERN_ID, RUN_ID) - the whole history the trends are derived from.
+     * (PATTERN_ID, RUN_ID) - the whole history the trends are derived from. The engine's
+     * {@code QUERY_ER_PATTERN_TREND_BY_TEMPLATE_ID}: each row carries the row counts of its
+     * run on the template, for rates.
      *
      * <p>ER_DASHBOARD_PATTERN and ER_DASHBOARD_PATTERN_STAT come with a later engine than
      * the other dashboard tables, so a datasource can hold the rest without them. That case
      * throws {@code DashboardSchemaMissingException} like any missing table; the service
      * decides it means "no patterns" rather than an error.
      *
-     * @param templateId the TEMPLATE_ID the statistics are filed under
+     * @param templateId the reconciliation template's TEMPLATE_ID, the one ER_DASHBOARD_STAT_ROWS
+     *                   carries
      */
     List<PatternStat> findPatternHistory(int templateId);
 
-    /** One pattern's stat rows, ordered by RUN_ID. */
-    List<PatternStat> findPatternStats(int patternId);
-
     PatternRow findPattern(int patternId);
 
+    /** Every pattern of the given templates, ordered by PATTERN_ID. */
+    List<PatternRow> findPatternsByTemplates(Collection<Integer> templateIds);
+
     /**
-     * Updates the operator qualification of one pattern: ROOT_CAUSE, OWNER_NAME and
-     * TICKET_REF, written together. Returns the number of rows changed.
+     * Every pattern sharing {@code signature}, one per template, with its count on
+     * {@code runId} - the engine's {@code QUERY_ER_PATTERN_BY_SIGNATURE}. Ordered by template
+     * path.
      */
-    int updatePatternQualification(int patternId, String rootCause, String ownerName,
-                                   String ticketRef);
+    List<PatternSighting> findPatternsBySignature(String signature, int runId);
+
+    /**
+     * Sets LINKED_PATTERN_ID on one pattern, or clears it with null - the engine's
+     * {@code UPDATE_ER_PATTERN_LINK}. Returns the number of rows changed.
+     *
+     * <p>Only ever called on a user's request; the checks against a link to itself or a
+     * cycle are the service's.
+     */
+    int updatePatternLink(int patternId, Integer linkedPatternId);
 
     /** Updates DESCRIPTION on one batch. Returns the number of rows changed. */
     int updateBatchDescription(int batchId, String description);
@@ -127,8 +140,8 @@ public interface DashboardDao {
      *
      * <p>Patterns are shared across runs too, so ER_DASHBOARD_PATTERN only loses the
      * patterns left with no occurrence row at all. One whose FIRST_SEEN_RUN is deleted but
-     * that was counted on a later run is kept, qualification included, and moved to the
-     * earliest run that still counts it.
+     * that was counted on a later run is kept, its link included, and moved to the earliest
+     * run that still counts it.
      *
      * @return how many rows were removed per table name
      */

@@ -5,13 +5,19 @@ import com.finboxsolutions.easyrec.dashboard.service.PatternService;
 
 import java.util.List;
 
-/** The runs behind a pattern's trend chart, newest first. */
+/**
+ * The runs behind a pattern's trend chart, newest first.
+ *
+ * <p>"Pattern" names the pattern each run was counted under: the one on screen, or an earlier
+ * one it is linked to, whose runs continue the curve back across the link.
+ */
 public class PatternHistoryTableModel extends DashboardTableModel<PatternService.PatternPoint> {
 
     private static final long serialVersionUID = 1L;
 
     private static final List<String> COLUMNS = List.of(
-            "When", "Batch", "Run", "Trend", "Occurrences", "Change", "% of Rows");
+            "When", "Batch", "Run", "Pattern", "Trend", "Occurrences", "Change", "% of Rows",
+            "Rows Compared");
 
     public PatternHistoryTableModel() {
         super(COLUMNS);
@@ -29,9 +35,9 @@ public class PatternHistoryTableModel extends DashboardTableModel<PatternService
     public Class<?> getColumnClass(int column) {
         return switch (columnName(column)) {
             case "When" -> String.class;
-            case "Batch", "Run" -> Integer.class;
+            case "Batch", "Run", "Pattern" -> Integer.class;
             case "Trend" -> PatternTrend.class;
-            case "Occurrences", "Change" -> Long.class;
+            case "Occurrences", "Change", "Rows Compared" -> Long.class;
             default -> Double.class;
         };
     }
@@ -42,10 +48,12 @@ public class PatternHistoryTableModel extends DashboardTableModel<PatternService
             case "When" -> point.longLabel();
             case "Batch" -> point.batch() == null ? null : point.batch().batchId();
             case "Run" -> point.runId();
+            case "Pattern" -> point.countedAs().patternId();
             case "Trend" -> point.line().trend();
             case "Occurrences" -> point.line().occurrences();
             case "Change" -> point.line().change();
             case "% of Rows" -> point.line().shareOfRows();
+            case "Rows Compared" -> point.line().stat().rowsCompared();
             default -> null;
         };
     }

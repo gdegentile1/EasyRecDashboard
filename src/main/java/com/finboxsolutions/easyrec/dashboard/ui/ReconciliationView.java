@@ -289,8 +289,9 @@ public class ReconciliationView extends JPanel {
         // Fewer occurrences is the improvement, and a count of breaks is a whole number.
         Tables.renderer(patternTable, "Change", Renderers.delta("", false, 0));
         Tables.renderer(patternTable, "% of Rows", Renderers.numeric(2, null));
+        Tables.renderer(patternTable, "Column Unexplained", Renderers.count());
         Tables.renderer(patternTable, "First Seen Run", Renderers.identifier());
-
+        Tables.renderer(patternTable, "Linked To", Renderers.identifier());
     }
 
     public void load(int requestedRunId, int requestedTemplateId) {
@@ -314,8 +315,9 @@ public class ReconciliationView extends JPanel {
             if (target != null && target.statsTemplateId() != null) {
                 loaded.put("columns", dao.findColumnStats(requestedRunId, target.statsTemplateId()));
                 loaded.put("pivots", dao.findPivots(requestedRunId, target.statsTemplateId()));
-                loaded.put("patterns", patterns.patternsOf(requestedRunId,
-                        target.statsTemplateId(), target.stats()));
+                // The reconciliation template's id, as the statistics carry it - never the
+                // project template ER_DASHBOARD_RUN points at.
+                loaded.put("patterns", patterns.patternsOf(requestedRunId, target.statsTemplateId()));
             } else {
                 loaded.put("columns", List.<ColumnStats>of());
                 loaded.put("pivots", List.<PivotRow>of());
@@ -370,27 +372,31 @@ public class ReconciliationView extends JPanel {
     }
 
     /**
-     * The line above the patterns table: how many were detected and what moved.
+     * The line above the patterns table: how many were detected, what moved, and how many
+     * breaks are left without a rule.
      *
      * <p>A tracked template with no row on this run is said to be so rather than shown as an
-     * empty table: the export skips a run whose diff was truncated or unavailable, and an
-     * empty list would read as "no patterns", which is the opposite of what is known.
+     * empty table or as zeros: the export skips a run whose diff was truncated or unavailable,
+     * or whose template switched patterns off, and an empty list would read as "no patterns",
+     * which is the opposite of what is known.
      */
     private static String patternSummary(PatternService.RunPatterns found) {
         if (!found.exported()) {
-            return "Not exported on this run (" + found.knownCount()
-                    + " known on this template)";
+            return "No pattern data for this run (" + found.knownCount()
+                    + " patterns known on this template)";
         }
         StringBuilder text = new StringBuilder()
                 .append(found.presentCount()).append(" detected");
         for (PatternTrend trend : List.of(PatternTrend.NEW, PatternTrend.REAPPEARED,
-                PatternTrend.INCREASING, PatternTrend.RESOLVED)) {
+                PatternTrend.INCREASING, PatternTrend.NOT_DETECTED)) {
             long count = found.count(trend);
             if (count > 0) {
                 text.append(", ").append(count).append(' ')
                         .append(trend.label().toLowerCase(Locale.ROOT));
             }
         }
+        text.append(String.format(Locale.ROOT, "  \u2022  %,d breaks with no rule found",
+                found.unexplained()));
         return text.append("  -  double-click for its history").toString();
     }
 

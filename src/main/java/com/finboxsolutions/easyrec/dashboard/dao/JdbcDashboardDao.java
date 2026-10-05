@@ -3,6 +3,7 @@ package com.finboxsolutions.easyrec.dashboard.dao;
 import com.finboxsolutions.easyrec.dashboard.model.BatchRow;
 import com.finboxsolutions.easyrec.dashboard.model.ColumnStats;
 import com.finboxsolutions.easyrec.dashboard.model.PatternRow;
+import com.finboxsolutions.easyrec.dashboard.model.PatternSighting;
 import com.finboxsolutions.easyrec.dashboard.model.PatternStat;
 import com.finboxsolutions.easyrec.dashboard.model.PivotMetric;
 import com.finboxsolutions.easyrec.dashboard.model.PivotRow;
@@ -85,15 +86,25 @@ public class JdbcDashboardDao implements DashboardDao {
             + "COL_IMPACT, COL_IMPACT_ABS, COL_AVERAGE, COL_STD_DEVIATION, COL_MIN_DIFF_ABS, "
             + "COL_MAX_DIFF_ABS, COL_MIN_DIFF_PCT, COL_MAX_DIFF_PCT";
 
-    /** ER_DASHBOARD_PATTERN, aliased p, then ER_DASHBOARD_PATTERN_STAT, aliased s. */
-    private static final String PATTERN_STAT_COLUMNS =
+    /** ER_DASHBOARD_PATTERN, aliased p. */
+    private static final String PATTERN_COLUMNS =
             "p.PATTERN_ID, p.TEMPLATE_ID, p.SIGNATURE, p.DESCRIPTION, p.FIRST_SEEN_RUN, "
-            + "p.LINKED_PATTERN_ID, p.ROOT_CAUSE, p.OWNER_NAME, p.TICKET_REF, "
-            + "s.RUN_ID, s.OCCURRENCES, s.ABOVE_THRESHOLD, s.TEMPLATE_CFG_HASH";
+            + "p.LINKED_PATTERN_ID";
 
-    private static final String PATTERN_STAT_FROM =
-            " FROM ER_DASHBOARD_PATTERN_STAT s"
-            + " JOIN ER_DASHBOARD_PATTERN p ON p.PATTERN_ID = s.PATTERN_ID";
+    /**
+     * The engine's QUERY_ER_PATTERN_TREND_BY_TEMPLATE_ID, with the two pattern columns it
+     * leaves out and PatternRow needs, and without its two LAG columns: the previous count is
+     * a step of the trend, and the trend is the service's - it follows a pattern across its
+     * link, which a window over PATTERN_ID cannot. That also spares sqlite older than 3.25.
+     */
+    private static final String PATTERN_TREND_QUERY =
+            "SELECT " + PATTERN_COLUMNS + ", s.RUN_ID, s.OCCURRENCES, s.ABOVE_THRESHOLD, "
+            + "s.TEMPLATE_CFG_HASH, r.ROWS_SOURCE, r.ROWS_TARGET"
+            + " FROM ER_DASHBOARD_PATTERN_STAT s"
+            + " JOIN ER_DASHBOARD_PATTERN p ON p.PATTERN_ID = s.PATTERN_ID"
+            + " LEFT JOIN ER_DASHBOARD_STAT_ROWS r ON r.RUN_ID = s.RUN_ID AND r.TEMPLATE_ID = p.TEMPLATE_ID"
+            + " WHERE p.TEMPLATE_ID = ?"
+            + " ORDER BY s.PATTERN_ID, s.RUN_ID";
 
     /**
      * Which ER_DASHBOARD_PIVOT column backs each measure. Kept as a map so the SELECT list,
@@ -303,47 +314,57 @@ public class JdbcDashboardDao implements DashboardDao {
 
     @Override
     public List<PatternStat> findPatternHistory(int templateId) {
-        // No LAG here, although the engine's own read query uses one: the previous count is
-        // a step of the trend, and the trend is the service's - see PatternService.
-        return query("SELECT " + PATTERN_STAT_COLUMNS + PATTERN_STAT_FROM
-                        + " WHERE p.TEMPLATE_ID = ? ORDER BY s.PATTERN_ID, s.RUN_ID",
-                statement -> statement.setInt(1, templateId), JdbcDashboardDao::readPatternStat);
-    }
-
-    @Override
-    public List<PatternStat> findPatternStats(int patternId) {
-        return query("SELECT " + PATTERN_STAT_COLUMNS + PATTERN_STAT_FROM
-                        + " WHERE s.PATTERN_ID = ? ORDER BY s.RUN_ID",
-                statement -> statement.setInt(1, patternId), JdbcDashboardDao::readPatternStat);
+        return query(PATTERN_TREND_QUERY, statement -> statement.setInt(1, templateId),
+                JdbcDashboardDao::readPatternStat);
     }
 
     @Override
     public PatternRow findPattern(int patternId) {
         List<PatternRow> found = query(
-                "SELECT p.PATTERN_ID, p.TEMPLATE_ID, p.SIGNATURE, p.DESCRIPTION, p.FIRST_SEEN_RUN, "
-                        + "p.LINKED_PATTERN_ID, p.ROOT_CAUSE, p.OWNER_NAME, p.TICKET_REF "
-                        + "FROM ER_DASHBOARD_PATTERN p WHERE p.PATTERN_ID = ?",
+                "SELECT " + PATTERN_COLUMNS + " FROM ER_DASHBOARD_PATTERN p WHERE p.PATTERN_ID = ?",
                 statement -> statement.setInt(1, patternId), JdbcDashboardDao::readPattern);
         return found.isEmpty() ? null : found.get(0);
     }
 
     @Override
-    public int updatePatternQualification(int patternId, String rootCause, String ownerName,
-                                          String ticketRef) {
-        // The engine's UPDATE_ER_PATTERN_QUALIFICATION, column for column. A blank is stored
-        // as null so that "never qualified" and "qualification cleared" read the same.
-        return update("UPDATE ER_DASHBOARD_PATTERN SET ROOT_CAUSE = ?, OWNER_NAME = ?, "
-                        + "TICKET_REF = ? WHERE PATTERN_ID = ?",
-                statement -> {
-                    statement.setString(1, blankToNull(rootCause));
-                    statement.setString(2, blankToNull(ownerName));
-                    statement.setString(3, blankToNull(ticketRef));
-                    statement.setInt(4, patternId);
-                });
+    public List<PatternRow> findPatternsByTemplates(Collection<Integer> templateIds) {
+        List<PatternRow> found = queryByIds(
+                "SELECT " + PATTERN_COLUMNS + " FROM ER_DASHBOARD_PATTERN p WHERE p.TEMPLATE_ID IN ",
+                "", templateIds, JdbcDashboardDao::readPattern);
+        // Sorted here rather than in SQL: the ids may have come in several chunks.
+        found.sort(java.util.Comparator.comparingInt(PatternRow::patternId));
+        return found;
     }
 
-    private static String blankToNull(String value) {
-        return value == null || value.isBlank() ? null : value.trim();
+    @Override
+    public List<PatternSighting> findPatternsBySignature(String signature, int runId) {
+        // The engine's QUERY_ER_PATTERN_BY_SIGNATURE, column for column but for p.*.
+        return query("SELECT t.FULL_PATH, " + PATTERN_COLUMNS + ", s.OCCURRENCES"
+                        + " FROM ER_DASHBOARD_PATTERN p"
+                        + " JOIN ER_DASHBOARD_TEMPLATE t ON t.TEMPLATE_ID = p.TEMPLATE_ID"
+                        + " LEFT JOIN ER_DASHBOARD_PATTERN_STAT s ON s.PATTERN_ID = p.PATTERN_ID AND s.RUN_ID = ?"
+                        + " WHERE p.SIGNATURE = ?"
+                        + " ORDER BY t.FULL_PATH, p.TEMPLATE_ID",
+                statement -> {
+                    statement.setInt(1, runId);
+                    statement.setString(2, signature);
+                },
+                rows -> new PatternSighting(readPattern(rows), rows.getString("FULL_PATH"),
+                        Sql.bigint(rows, "OCCURRENCES")));
+    }
+
+    @Override
+    public int updatePatternLink(int patternId, Integer linkedPatternId) {
+        // The engine's UPDATE_ER_PATTERN_LINK.
+        return update("UPDATE ER_DASHBOARD_PATTERN SET LINKED_PATTERN_ID = ? WHERE PATTERN_ID = ?",
+                statement -> {
+                    if (linkedPatternId == null) {
+                        statement.setNull(1, java.sql.Types.INTEGER);
+                    } else {
+                        statement.setInt(1, linkedPatternId);
+                    }
+                    statement.setInt(2, patternId);
+                });
     }
 
     // --------------------------------------------------------------------- filter options
@@ -800,10 +821,7 @@ public class JdbcDashboardDao implements DashboardDao {
                 rows.getString("SIGNATURE"),
                 rows.getString("DESCRIPTION"),
                 Sql.integer(rows, "FIRST_SEEN_RUN"),
-                Sql.integer(rows, "LINKED_PATTERN_ID"),
-                rows.getString("ROOT_CAUSE"),
-                rows.getString("OWNER_NAME"),
-                rows.getString("TICKET_REF"));
+                Sql.integer(rows, "LINKED_PATTERN_ID"));
     }
 
     private static PatternStat readPatternStat(ResultSet rows) throws SQLException {
@@ -814,7 +832,11 @@ public class JdbcDashboardDao implements DashboardDao {
                 // SMALLINT 1 or 0. Read as a number rather than getBoolean, which not every
                 // driver maps from a SMALLINT.
                 rows.getInt("ABOVE_THRESHOLD") != 0,
-                rows.getString("TEMPLATE_CFG_HASH"));
+                rows.getString("TEMPLATE_CFG_HASH"),
+                // Null, not zero, when the run has no row statistics on the template: the
+                // LEFT JOIN found nothing, and a rate over zero rows is no rate.
+                Sql.bigint(rows, "ROWS_SOURCE"),
+                Sql.bigint(rows, "ROWS_TARGET"));
     }
 
     private static PivotRow readPivot(ResultSet rows) throws SQLException {

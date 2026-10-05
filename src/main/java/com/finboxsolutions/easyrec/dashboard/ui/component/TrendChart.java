@@ -39,6 +39,10 @@ public class TrendChart extends JComponent {
     private static final int MAX_X_LABELS = 7;
 
     private final List<Point> points = new ArrayList<>();
+    /** A second line on the same axis, one value per point, or empty; see {@link #setSecondary}. */
+    private final List<Double> secondary = new ArrayList<>();
+    private String primaryName;
+    private String secondaryName;
     private String unit = "%";
     private Double axisMaximum;
     private int hoveredIndex = -1;
@@ -74,9 +78,29 @@ public class TrendChart extends JComponent {
     public void setPoints(List<Point> newPoints, String unit, Double axisMaximum) {
         points.clear();
         points.addAll(newPoints);
+        secondary.clear();
+        primaryName = null;
+        secondaryName = null;
         this.unit = unit;
         this.axisMaximum = axisMaximum;
         hoveredIndex = -1;
+        repaint();
+    }
+
+    /**
+     * Adds a second, dashed line on the same axis, under a small legend. Call after
+     * {@link #setPoints}, which clears it.
+     *
+     * <p>Only for two figures of the same kind and scale - a total and the part of it that
+     * matters most - which is why there is no second axis.
+     *
+     * @param values one per point, in the same order; a null breaks the line
+     */
+    public void setSecondary(List<Double> values, String primaryName, String secondaryName) {
+        secondary.clear();
+        secondary.addAll(values);
+        this.primaryName = primaryName;
+        this.secondaryName = secondaryName;
         repaint();
     }
 
@@ -105,8 +129,10 @@ public class TrendChart extends JComponent {
             if (points.size() > 1) {
                 paintLine(canvas, plotWidth, plotHeight, top);
             }
+            paintSecondary(canvas, plotWidth, plotHeight, top);
             paintMarkers(canvas, plotWidth, plotHeight, top);
             paintXLabels(canvas, plotWidth, height);
+            paintLegend(canvas, width);
         } finally {
             canvas.dispose();
         }
@@ -120,6 +146,11 @@ public class TrendChart extends JComponent {
         for (Point point : points) {
             if (point.value() != null) {
                 maximum = Math.max(maximum, point.value());
+            }
+        }
+        for (Double value : secondary) {
+            if (value != null) {
+                maximum = Math.max(maximum, value);
             }
         }
         if (maximum <= 0.0d) {
@@ -164,6 +195,58 @@ public class TrendChart extends JComponent {
         canvas.setColor(Palette.accent());
         canvas.setStroke(new BasicStroke(2f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
         canvas.draw(line);
+    }
+
+    /** The second line, dashed and in the warning colour, with small square markers. */
+    private void paintSecondary(Graphics2D canvas, int plotWidth, int plotHeight, double top) {
+        if (secondary.isEmpty()) {
+            return;
+        }
+        GeneralPath line = new GeneralPath(Path2D.WIND_NON_ZERO);
+        boolean started = false;
+        int count = Math.min(points.size(), secondary.size());
+        canvas.setColor(Palette.warning());
+        for (int index = 0; index < count; index++) {
+            Double value = secondary.get(index);
+            if (value == null) {
+                started = false;
+                continue;
+            }
+            float x = xOf(index, plotWidth);
+            float y = yOf(value, plotHeight, top);
+            if (started) {
+                line.lineTo(x, y);
+            } else {
+                line.moveTo(x, y);
+                started = true;
+            }
+            canvas.fillRect((int) x - 3, (int) y - 3, 6, 6);
+        }
+        canvas.setStroke(new BasicStroke(2f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND,
+                10f, new float[] {6f, 4f}, 0f));
+        canvas.draw(line);
+    }
+
+    /** Names the two lines, top right, when there is a second one. */
+    private void paintLegend(Graphics2D canvas, int width) {
+        if (secondary.isEmpty() || primaryName == null || secondaryName == null) {
+            return;
+        }
+        java.awt.FontMetrics metrics = canvas.getFontMetrics();
+        int y = PAD_TOP + metrics.getAscent() - 2;
+        int x = width - PAD_RIGHT - metrics.stringWidth(secondaryName) - 22;
+        canvas.setColor(Palette.warning());
+        canvas.setStroke(new BasicStroke(2f, BasicStroke.CAP_BUTT, BasicStroke.JOIN_ROUND,
+                10f, new float[] {4f, 3f}, 0f));
+        canvas.drawLine(x, y - 4, x + 16, y - 4);
+        canvas.setColor(Palette.muted());
+        canvas.drawString(secondaryName, x + 20, y);
+        x -= metrics.stringWidth(primaryName) + 32;
+        canvas.setColor(Palette.accent());
+        canvas.setStroke(new BasicStroke(2f));
+        canvas.drawLine(x, y - 4, x + 16, y - 4);
+        canvas.setColor(Palette.muted());
+        canvas.drawString(primaryName, x + 20, y);
     }
 
     private void paintMarkers(Graphics2D canvas, int plotWidth, int plotHeight, double top) {

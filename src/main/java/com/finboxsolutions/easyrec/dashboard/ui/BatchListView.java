@@ -264,7 +264,7 @@ public class BatchListView extends JPanel {
         text.append("\nThis removes their runs, their reconciliation context,\n"
                 + "their row and column statistics, their pivot breakdown\n"
                 + "and their pattern counts. Template definitions are kept, and so\n"
-                + "is every pattern a remaining run still counts, with its qualification.\n\n"
+                + "is every pattern a remaining run still counts, with its link.\n\n"
                 + "It cannot be undone.");
         return text.toString();
     }

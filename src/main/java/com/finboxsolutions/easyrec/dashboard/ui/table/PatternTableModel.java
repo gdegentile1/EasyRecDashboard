@@ -6,14 +6,21 @@ import com.finboxsolutions.easyrec.dashboard.service.PatternService;
 
 import java.util.List;
 
-/** The patterns of one reconciliation, most occurrences first, with their movement. */
+/**
+ * The patterns of one reconciliation, most occurrences first, with their movement.
+ *
+ * <p>"Column Unexplained" is filled for a pattern not detected on the run only: it is the
+ * count of its column's unexplained pattern on the same run, where a rule's breaks go once
+ * it falls below the engine's support floor. Shown beside the zero so a zero is not read as
+ * a fix.
+ */
 public class PatternTableModel extends DashboardTableModel<PatternService.PatternLine> {
 
     private static final long serialVersionUID = 1L;
 
     private static final List<String> COLUMNS = List.of(
             "Pattern", "Trend", "Occurrences", "Change", "% of Rows", "Previous",
-            "First Seen Run", "Root Cause", "Owner", "Ticket");
+            "Column Unexplained", "First Seen Run", "Linked To");
 
     public PatternTableModel() {
         super(COLUMNS);
@@ -31,9 +38,9 @@ public class PatternTableModel extends DashboardTableModel<PatternService.Patter
     public Class<?> getColumnClass(int column) {
         return switch (columnName(column)) {
             case "Trend" -> PatternTrend.class;
-            case "Occurrences", "Change", "Previous" -> Long.class;
+            case "Occurrences", "Change", "Previous", "Column Unexplained" -> Long.class;
             case "% of Rows" -> Double.class;
-            case "First Seen Run" -> Integer.class;
+            case "First Seen Run", "Linked To" -> Integer.class;
             default -> String.class;
         };
     }
@@ -48,15 +55,10 @@ public class PatternTableModel extends DashboardTableModel<PatternService.Patter
             case "Change" -> line.change();
             case "% of Rows" -> line.shareOfRows();
             case "Previous" -> line.previous();
+            case "Column Unexplained" -> line.unexplainedOnColumn();
             case "First Seen Run" -> pattern.firstSeenRun();
-            case "Root Cause" -> orDash(pattern.rootCause());
-            case "Owner" -> orDash(pattern.ownerName());
-            case "Ticket" -> orDash(pattern.ticketRef());
+            case "Linked To" -> pattern.linkedPatternId();
             default -> null;
         };
-    }
-
-    private static String orDash(String value) {
-        return value == null || value.isBlank() ? "-" : value;
     }
 }

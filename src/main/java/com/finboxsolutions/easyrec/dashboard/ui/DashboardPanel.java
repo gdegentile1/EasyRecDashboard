@@ -86,7 +86,7 @@ public class DashboardPanel extends JPanel implements DashboardNavigator {
         this.batchDetailView = new BatchDetailView(dao, dashboard, this);
         this.reconciliationView = new ReconciliationView(dao, dashboard, patternService, this);
         this.compareView = new CompareView(dao, dashboard, compare, this);
-        this.historyView = new HistoryView(historyService, this);
+        this.historyView = new HistoryView(historyService, patternService, this);
         this.patternView = new PatternView(patternService, this);
 
         this.backButton = Sections.createIconButton(DashboardIcons.ICON_BACK, "Back",

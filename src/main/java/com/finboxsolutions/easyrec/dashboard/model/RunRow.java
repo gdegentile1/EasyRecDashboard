@@ -3,10 +3,10 @@ package com.finboxsolutions.easyrec.dashboard.model;
 /**
  * One row of ER_DASHBOARD_RUN: a reconciliation run inside a batch.
  *
- * <p>TEMPLATE_ID is held as a plain id rather than as a resolved template, for the same
- * reason {@link RunContextRow} does: ER_DASHBOARD_TEMPLATE holds two rows per
- * reconciliation and the caller has to choose between them, see
- * {@code TemplateIds#resolveStatsTemplateId}.
+ * <p>TEMPLATE_ID here is the project's main template, a container with no statistics of its
+ * own: it names what the batch ran, and is never the id to read a reconciliation's
+ * statistics, pivot or patterns with. Those come from the context row or ER_DASHBOARD_STAT_ROWS,
+ * see {@code TemplateIds}.
  *
  * <p>PROJECT_PATH is the run's own, and is not the same thing as the template path beside
  * it: the template path names the file that was reconciled, this names the project it was
