@@ -97,14 +97,15 @@ public class JdbcDashboardDao implements DashboardDao {
      * a step of the trend, and the trend is the service's - it follows a pattern across its
      * link, which a window over PATTERN_ID cannot. That also spares sqlite older than 3.25.
      */
-    private static final String PATTERN_TREND_QUERY =
+    private static final String PATTERN_TREND_SELECT =
             "SELECT " + PATTERN_COLUMNS + ", s.RUN_ID, s.OCCURRENCES, s.ABOVE_THRESHOLD, "
             + "s.TEMPLATE_CFG_HASH, r.ROWS_SOURCE, r.ROWS_TARGET"
             + " FROM ER_DASHBOARD_PATTERN_STAT s"
             + " JOIN ER_DASHBOARD_PATTERN p ON p.PATTERN_ID = s.PATTERN_ID"
-            + " LEFT JOIN ER_DASHBOARD_STAT_ROWS r ON r.RUN_ID = s.RUN_ID AND r.TEMPLATE_ID = p.TEMPLATE_ID"
-            + " WHERE p.TEMPLATE_ID = ?"
-            + " ORDER BY s.PATTERN_ID, s.RUN_ID";
+            + " LEFT JOIN ER_DASHBOARD_STAT_ROWS r ON r.RUN_ID = s.RUN_ID AND r.TEMPLATE_ID = p.TEMPLATE_ID";
+
+    private static final String PATTERN_TREND_QUERY =
+            PATTERN_TREND_SELECT + " WHERE p.TEMPLATE_ID = ?" + " ORDER BY s.PATTERN_ID, s.RUN_ID";
 
     /**
      * Which ER_DASHBOARD_PIVOT column backs each measure. Kept as a map so the SELECT list,
@@ -316,6 +317,16 @@ public class JdbcDashboardDao implements DashboardDao {
     public List<PatternStat> findPatternHistory(int templateId) {
         return query(PATTERN_TREND_QUERY, statement -> statement.setInt(1, templateId),
                 JdbcDashboardDao::readPatternStat);
+    }
+
+    @Override
+    public List<PatternStat> findPatternHistory(Collection<Integer> templateIds) {
+        List<PatternStat> history = queryByIds(PATTERN_TREND_SELECT + " WHERE p.TEMPLATE_ID IN ",
+                "", templateIds, JdbcDashboardDao::readPatternStat);
+        // Sorted here rather than in SQL: the ids may have come in several chunks.
+        history.sort(java.util.Comparator.comparingInt(PatternStat::patternId)
+                .thenComparingInt(PatternStat::runId));
+        return history;
     }
 
     @Override

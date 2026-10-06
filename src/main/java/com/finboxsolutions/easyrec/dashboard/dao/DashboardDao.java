@@ -11,7 +11,9 @@ import com.finboxsolutions.easyrec.dashboard.model.RunContextRow;
 import com.finboxsolutions.easyrec.dashboard.model.RunRow;
 import com.finboxsolutions.easyrec.dashboard.model.TemplateRow;
 
+import java.util.ArrayList;
 import java.util.Collection;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 
@@ -90,6 +92,25 @@ public interface DashboardDao {
      *                   carries
      */
     List<PatternStat> findPatternHistory(int templateId);
+
+    /**
+     * {@link #findPatternHistory(int)} for several templates at once, ordered by
+     * (PATTERN_ID, RUN_ID): what the campaign view reads to put a trend on every cause of a
+     * project in one go rather than one template at a time.
+     *
+     * <p>The default reads the templates one by one, so an implementation that does not
+     * override it stays correct; {@code JdbcDashboardDao} overrides it with one query per
+     * IN-sized chunk.
+     */
+    default List<PatternStat> findPatternHistory(Collection<Integer> templateIds) {
+        List<PatternStat> history = new ArrayList<>();
+        for (Integer templateId : new LinkedHashSet<>(templateIds)) {
+            if (templateId != null) {
+                history.addAll(findPatternHistory(templateId.intValue()));
+            }
+        }
+        return history;
+    }
 
     PatternRow findPattern(int patternId);
 
